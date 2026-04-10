@@ -52,10 +52,19 @@ impl Evaluator {
         })?;
 
         let fname = resolved.display().to_string();
+        let caller_filename = self.filename.as_ref().map(|p| p.display().to_string());
+        let import_line = node.span.line;
+        let import_col = node.span.col;
+
+        let add_trace = |e: UzonError| {
+            e.with_filename(fname.clone())
+             .with_import_site(import_line, import_col, caller_filename.clone())
+        };
+
         let (tokens, comment_lines) = Lexer::new(&source).tokenize()
-            .map_err(|e| e.with_filename(fname.clone()))?;
+            .map_err(add_trace)?;
         let doc = Parser::new(tokens, comment_lines).parse()
-            .map_err(|e| e.with_filename(fname.clone()))?;
+            .map_err(add_trace)?;
 
         self.import_stack.push(resolved.clone());
 
@@ -69,7 +78,7 @@ impl Evaluator {
             in_function_body: false,
         };
         let result = child_eval.evaluate(&doc)
-            .map_err(|e| e.with_filename(fname))?;
+            .map_err(add_trace)?;
 
         self.import_stack.pop();
         self.import_cache.insert(resolved, result.clone());
