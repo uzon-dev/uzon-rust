@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: © 2026 Suho Kang
+# SPDX-License-Identifier: MIT
+
+[package]
+name = "uzon"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+num-bigint = "0.4"
+num-traits = "0.2"
