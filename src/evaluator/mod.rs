@@ -442,6 +442,7 @@ pub fn from_path(path: &Path) -> Result<BTreeMap<String, Value>> {
         UzonError::Runtime {
             message: format!("cannot read file '{fname}': {e}"),
             location: None,
+            import_trace: Vec::new(),
         }
     })?;
     let (tokens, comment_lines) = Lexer::new(&source).tokenize()

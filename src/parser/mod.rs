@@ -129,6 +129,15 @@ impl Parser {
         }
     }
 
+    /// Look past newlines without consuming them.
+    fn peek_past_newlines_is(&self, tt: TokenType) -> bool {
+        let mut i = self.pos;
+        while i < self.tokens.len() && self.tokens[i].token_type == TokenType::Newline {
+            i += 1;
+        }
+        i < self.tokens.len() && self.tokens[i].token_type == tt
+    }
+
     /// Check if position `pos` starts a new binding: identifier followed by `is` or `are`.
     ///
     /// Uses the 2-token lookahead described in §8 to distinguish binding starts
@@ -152,11 +161,7 @@ impl Parser {
 
         matches!(
             self.tokens[next].token_type,
-            TokenType::Is
-                | TokenType::IsNot
-                | TokenType::IsNamed
-                | TokenType::IsNotNamed
-                | TokenType::Are
+            TokenType::Is | TokenType::Are
         )
     }
 
@@ -363,8 +368,15 @@ impl Parser {
     /// Suppresses element-level `as` so the trailing `as` is captured as the
     /// list-level type annotation. `as` still works inside parens/brackets.
     fn parse_are_binding(&mut self, name: String, span: Span) -> Result<Binding> {
-        self.suppress_as = true;
+        // §3.4.1: `as` disambiguation — trailing `as` at the end of an `are` binding
+        // is list-level type annotation, not element-level. But `as` WITHIN non-last
+        // elements must be allowed (e.g., `"x" as ApiResponse named loading, ...`).
+        // Strategy: parse all elements with `as` enabled. After the loop, if there's
+        // a remaining `as` token, it's the list-level annotation. If not, check if the
+        // last element is a bare TypeAnnotation and lift it.
         let mut elements = Vec::new();
+        // For the first element, save position in case we need to re-parse as last element
+        let first_pos = self.pos;
         elements.push(self.parse_expression()?);
 
         loop {
@@ -388,16 +400,47 @@ impl Parser {
 
             elements.push(self.parse_expression()?);
         }
-        self.suppress_as = false;
 
-        // Optional trailing `as` for list-level type annotation
-        self.skip_newlines();
-        let list_type_annotation = if self.at(TokenType::As) {
-            self.advance();
+        // List-level `as` annotation: if the trailing `as` was consumed by the last
+        // element as TypeAnnotation (not wrapped by named/from), re-parse with suppression.
+        let list_type_annotation = if self.peek_past_newlines_is(TokenType::As) {
+            // Explicit trailing `as` after all elements
+            self.skip_newlines();
+            self.advance(); // consume `as`
             self.skip_newlines();
             Some(self.parse_type_expr()?)
+        } else if elements.len() == 1 {
+            // Single element: if it's a bare TypeAnnotation, lift it
+            if let NodeKind::TypeAnnotation { .. } = &elements[0].kind {
+                // Re-parse with suppress_as to separate element from list type
+                self.pos = first_pos;
+                elements.clear();
+                self.suppress_as = true;
+                elements.push(self.parse_expression()?);
+                self.suppress_as = false;
+                self.skip_newlines();
+                if self.at(TokenType::As) {
+                    self.advance();
+                    self.skip_newlines();
+                    Some(self.parse_type_expr()?)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         } else {
-            None
+            // Multiple elements: check if last is a bare TypeAnnotation
+            let last = elements.last().unwrap();
+            if let NodeKind::TypeAnnotation { expr, type_expr } = &last.kind {
+                // Lift: unwrap the TypeAnnotation from the last element
+                let inner = (**expr).clone();
+                let ty = type_expr.clone();
+                *elements.last_mut().unwrap() = inner;
+                Some(ty)
+            } else {
+                None
+            }
         };
 
         let called = self.try_parse_called()?;

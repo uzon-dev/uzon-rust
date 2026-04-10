@@ -4,6 +4,8 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use indexmap::IndexMap;
+
 use crate::ast::{Binding, FunctionParam, Node, TypeExpr};
 use crate::scope::TypeDef;
 
@@ -561,7 +563,7 @@ pub enum Value {
     String(String),
     List(Vec<Value>),
     Tuple(UzonTuple),
-    Struct(BTreeMap<String, Value>),
+    Struct(IndexMap<String, Value>),
     Enum(UzonEnum),
     Union(UzonUnion),
     TaggedUnion(UzonTaggedUnion),
@@ -600,12 +602,13 @@ impl Value {
             Value::List(items) => {
                 Value::List(items.into_iter().map(|v| v.to_plain()).collect())
             }
-            Value::Struct(fields) => Value::Struct(
-                fields
-                    .into_iter()
-                    .map(|(k, v)| (k, v.to_plain()))
-                    .collect(),
-            ),
+            Value::Struct(fields) => {
+                let mut result = IndexMap::with_capacity(fields.len());
+                for (k, v) in fields {
+                    result.insert(k, v.to_plain());
+                }
+                Value::Struct(result)
+            }
             other => other,
         }
     }
