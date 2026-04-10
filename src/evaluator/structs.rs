@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: © 2026 Suho Kang
 // SPDX-License-Identifier: MIT
 
-use std::collections::{BTreeMap, HashSet};
+use indexmap::IndexMap;
 
 use crate::ast::*;
 use crate::error::{Result, UzonError};
@@ -26,11 +26,12 @@ impl Evaluator {
             }
         }
 
-        let field_names: HashSet<&str> = fields.iter().map(|f| f.name.as_str()).collect();
-        let mut result = BTreeMap::new();
-        for (key, val) in child_scope.to_map() {
-            if field_names.contains(key.as_str()) {
-                result.insert(key, val);
+        let scope_map = child_scope.to_map();
+        let mut result = IndexMap::with_capacity(fields.len());
+        // Preserve declaration order
+        for field in fields {
+            if let Some(val) = scope_map.get(&field.name) {
+                result.insert(field.name.clone(), val.clone());
             }
         }
 

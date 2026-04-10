@@ -4,6 +4,8 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
+use indexmap::IndexMap;
+
 use crate::value::*;
 
 /// Options for UZON text generation (Appendix E).
@@ -258,7 +260,7 @@ fn write_tuple(out: &mut String, elements: &[Value], depth: usize, options: &Str
 /// Write a struct `{ name is value, ... }`.
 fn write_struct(
     out: &mut String,
-    fields: &BTreeMap<String, Value>,
+    fields: &IndexMap<String, Value>,
     depth: usize,
     options: &StringifyOptions,
 ) {
@@ -284,7 +286,7 @@ fn write_struct(
 }
 
 fn format_inline_struct(
-    fields: &BTreeMap<String, Value>,
+    fields: &IndexMap<String, Value>,
     depth: usize,
     options: &StringifyOptions,
 ) -> String {
@@ -306,7 +308,7 @@ fn has_nested_collection(items: &[Value]) -> bool {
     items.iter().any(|v| matches!(v, Value::Struct(_) | Value::List(_) | Value::Tuple(_)))
 }
 
-fn has_nested_struct_fields(fields: &BTreeMap<String, Value>) -> bool {
+fn has_nested_struct_fields(fields: &IndexMap<String, Value>) -> bool {
     fields.values().any(|v| matches!(v, Value::Struct(_) | Value::List(_) | Value::Tuple(_)))
 }
 
@@ -468,7 +470,7 @@ mod tests {
 
     #[test]
     fn test_struct_inline() {
-        let mut fields = BTreeMap::new();
+        let mut fields = IndexMap::new();
         fields.insert("x".into(), Value::int(1));
         fields.insert("y".into(), Value::int(2));
         let mut map = BTreeMap::new();
@@ -502,7 +504,7 @@ mod tests {
 
     #[test]
     fn test_keyword_identifier_quoting() {
-        let mut fields = BTreeMap::new();
+        let mut fields = IndexMap::new();
         fields.insert("is".into(), Value::int(1));
         let mut map = BTreeMap::new();
         map.insert("s".into(), Value::Struct(fields));
@@ -521,7 +523,7 @@ mod tests {
     #[test]
     fn test_empty_struct() {
         let mut map = BTreeMap::new();
-        map.insert("s".into(), Value::Struct(BTreeMap::new()));
+        map.insert("s".into(), Value::Struct(IndexMap::new()));
         let result = to_string(&map);
         assert!(result.contains("s is {}"));
     }

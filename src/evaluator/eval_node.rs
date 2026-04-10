@@ -200,7 +200,7 @@ impl Evaluator {
 
             NodeKind::StructImport { path } => {
                 let map = self.eval_struct_import(path, node)?;
-                Ok(Value::Struct(map))
+                Ok(Value::Struct(map.into_iter().collect()))
             }
             NodeKind::FieldExtraction { .. } => {
                 Err(UzonError::runtime("'of' can only be used directly after 'is' in a binding", node.span.line, node.span.col))
