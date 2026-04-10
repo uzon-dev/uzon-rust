@@ -3,7 +3,7 @@
 
 use crate::ast::*;
 use crate::error::{Result, UzonError};
-use crate::scope::{Scope, TypeDefKind};
+use crate::scope::{Scope, TypeDef, TypeDefKind};
 use crate::value::*;
 
 use super::Evaluator;
@@ -129,108 +129,13 @@ impl Evaluator {
                 } else { None }
             });
             if let Some((enum_name, variants)) = enum_info {
-                // Re-evaluate list elements from AST with enum context
-                if let NodeKind::ListLiteral { elements } = &expr.kind {
-                    let mut resolved = Vec::with_capacity(elements.len());
-                    for elem in elements {
-                        let v = if let NodeKind::Identifier { ref name } = elem.kind {
-                            if variants.contains(name) {
-                                Value::Enum(UzonEnum::new(
-                                    name.clone(), variants.clone(), Some(enum_name.clone()),
-                                ))
-                            } else {
-                                self.eval_node(elem, scope, exclude)?
-                            }
-                        } else {
-                            self.eval_node(elem, scope, exclude)?
-                        };
-                        if !v.is_null() {
-                            if let Some(inner_type_name) = inner.path.last() {
-                                self.check_type_assertion(&v, inner_type_name, node)?;
-                            }
-                        }
-                        resolved.push(v);
-                    }
-                    return Ok(Value::List(resolved));
-                }
+                return self.eval_list_enum_resolution(expr, &enum_name, &variants, inner, scope, exclude, node);
             }
         }
         // Non-enum list type annotation — validate already-evaluated elements
         if let Value::List(items) = val {
             if let Some(ref inner) = type_expr.inner {
-                if let Some(inner_type_name) = inner.path.last() {
-                    let int_type = IntegerType::from_type_name(inner_type_name);
-                    let float_type = FloatType::from_type_name(inner_type_name);
-                    let named_func_type = scope.resolve_type_path(&inner.path).and_then(|td| {
-                        if let TypeDefKind::Function { .. } = &td.kind { Some(td) } else { None }
-                    });
-                    let named_struct_type = scope.resolve_type_path(&inner.path).and_then(|td| {
-                        if let TypeDefKind::Struct { .. } = &td.kind { Some(td) } else { None }
-                    });
-                    for item in items.iter_mut() {
-                        if !item.is_null() {
-                            self.check_type_assertion(item, inner_type_name, node)?;
-                            // §6.3: named function type — nominal check
-                            if let Some(ref func_td) = named_func_type {
-                                if let Value::Function(f) = &*item {
-                                    if f.type_name.as_deref() != Some(&func_td.name) {
-                                        let got = f.type_name.as_deref().unwrap_or("anonymous");
-                                        return Err(UzonError::type_error(
-                                            format!("function type mismatch: expected {}, got {got}",
-                                                func_td.name),
-                                            node.span.line, node.span.col,
-                                        ));
-                                    }
-                                } else {
-                                    return Err(UzonError::type_error(
-                                        format!("cannot annotate {} as function type {}", item.type_name(), func_td.name),
-                                        node.span.line, node.span.col,
-                                    ));
-                                }
-                            }
-                            // §6.3: named struct type conformance in list
-                            if let Some(ref struct_td) = named_struct_type {
-                                if let TypeDefKind::Struct { ref fields } = struct_td.kind {
-                                    if let Value::Struct(val_fields) = &*item {
-                                        for key in val_fields.keys() {
-                                            if !fields.contains_key(key) {
-                                                return Err(UzonError::type_error(
-                                                    format!("field '{key}' does not exist in type {}", struct_td.name),
-                                                    node.span.line, node.span.col,
-                                                ));
-                                            }
-                                        }
-                                        for key in fields.keys() {
-                                            if !val_fields.contains_key(key) {
-                                                return Err(UzonError::type_error(
-                                                    format!("missing field '{key}' required by type {}", struct_td.name),
-                                                    node.span.line, node.span.col,
-                                                ));
-                                            }
-                                        }
-                                    } else {
-                                        return Err(UzonError::type_error(
-                                            format!("cannot annotate {} as struct type {}", item.type_name(), struct_td.name),
-                                            node.span.line, node.span.col,
-                                        ));
-                                    }
-                                }
-                            }
-                            // Set type_ann on each element after validation
-                            if let Some(it) = int_type {
-                                if let Value::Integer(n) = item {
-                                    n.type_ann = it;
-                                    n.explicit = true;
-                                }
-                            } else if let Some(ft) = float_type {
-                                if let Value::Float(f) = item {
-                                    f.type_ann = ft;
-                                    f.explicit = true;
-                                }
-                            }
-                        }
-                    }
-                }
+                self.validate_list_elements(items, inner, scope, node)?;
             }
         } else {
             return Err(UzonError::type_error(
@@ -239,6 +144,149 @@ impl Evaluator {
             ));
         }
         Ok(val.clone())
+    }
+
+    /// Re-evaluate list elements from AST with enum variant context.
+    fn eval_list_enum_resolution(
+        &mut self,
+        expr: &Node,
+        enum_name: &str,
+        variants: &[String],
+        inner: &TypeExpr,
+        scope: &mut Scope,
+        exclude: Option<&str>,
+        node: &Node,
+    ) -> Result<Value> {
+        if let NodeKind::ListLiteral { elements } = &expr.kind {
+            let mut resolved = Vec::with_capacity(elements.len());
+            for elem in elements {
+                let v = if let NodeKind::Identifier { ref name } = elem.kind {
+                    if variants.contains(name) {
+                        Value::Enum(UzonEnum::new(
+                            name.clone(), variants.to_vec(), Some(enum_name.to_string()),
+                        ))
+                    } else {
+                        self.eval_node(elem, scope, exclude)?
+                    }
+                } else {
+                    self.eval_node(elem, scope, exclude)?
+                };
+                if !v.is_null() {
+                    if let Some(inner_type_name) = inner.path.last() {
+                        self.check_type_assertion(&v, inner_type_name, node)?;
+                    }
+                }
+                resolved.push(v);
+            }
+            return Ok(Value::List(resolved));
+        }
+        // If the expression isn't a list literal, evaluate normally
+        self.eval_node(expr, scope, exclude)
+    }
+
+    /// Validate and annotate each element of an already-evaluated list against its inner type.
+    fn validate_list_elements(
+        &self,
+        items: &mut [Value],
+        inner: &TypeExpr,
+        scope: &mut Scope,
+        node: &Node,
+    ) -> Result<()> {
+        let inner_type_name = match inner.path.last() {
+            Some(name) => name.clone(),
+            None => return Ok(()),
+        };
+        let int_type = IntegerType::from_type_name(&inner_type_name);
+        let float_type = FloatType::from_type_name(&inner_type_name);
+        let named_func_type = scope.resolve_type_path(&inner.path).and_then(|td| {
+            if let TypeDefKind::Function { .. } = &td.kind { Some(td) } else { None }
+        });
+        let named_struct_type = scope.resolve_type_path(&inner.path).and_then(|td| {
+            if let TypeDefKind::Struct { .. } = &td.kind { Some(td) } else { None }
+        });
+        for item in items.iter_mut() {
+            if !item.is_null() {
+                self.check_type_assertion(item, &inner_type_name, node)?;
+                // §6.3: named function type — nominal check
+                if let Some(ref func_td) = named_func_type {
+                    Self::check_list_element_function_type(item, func_td, node)?;
+                }
+                // §6.3: named struct type conformance in list
+                if let Some(ref struct_td) = named_struct_type {
+                    Self::check_list_element_struct_conformance(item, struct_td, node)?;
+                }
+                // Set type_ann on each element after validation
+                if let Some(it) = int_type {
+                    if let Value::Integer(n) = item {
+                        n.type_ann = it;
+                        n.explicit = true;
+                    }
+                } else if let Some(ft) = float_type {
+                    if let Value::Float(f) = item {
+                        f.type_ann = ft;
+                        f.explicit = true;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Check that a list element conforms to a named function type (§6.3).
+    fn check_list_element_function_type(
+        item: &Value,
+        func_td: &TypeDef,
+        node: &Node,
+    ) -> Result<()> {
+        if let Value::Function(f) = item {
+            if f.type_name.as_deref() != Some(&func_td.name) {
+                let got = f.type_name.as_deref().unwrap_or("anonymous");
+                return Err(UzonError::type_error(
+                    format!("function type mismatch: expected {}, got {got}", func_td.name),
+                    node.span.line, node.span.col,
+                ));
+            }
+        } else {
+            return Err(UzonError::type_error(
+                format!("cannot annotate {} as function type {}", item.type_name(), func_td.name),
+                node.span.line, node.span.col,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Check that a list element struct conforms to a named struct type (§6.3).
+    fn check_list_element_struct_conformance(
+        item: &Value,
+        struct_td: &TypeDef,
+        node: &Node,
+    ) -> Result<()> {
+        if let TypeDefKind::Struct { ref fields } = struct_td.kind {
+            if let Value::Struct(val_fields) = item {
+                for key in val_fields.keys() {
+                    if !fields.contains_key(key) {
+                        return Err(UzonError::type_error(
+                            format!("field '{key}' does not exist in type {}", struct_td.name),
+                            node.span.line, node.span.col,
+                        ));
+                    }
+                }
+                for key in fields.keys() {
+                    if !val_fields.contains_key(key) {
+                        return Err(UzonError::type_error(
+                            format!("missing field '{key}' required by type {}", struct_td.name),
+                            node.span.line, node.span.col,
+                        ));
+                    }
+                }
+            } else {
+                return Err(UzonError::type_error(
+                    format!("cannot annotate {} as struct type {}", item.type_name(), struct_td.name),
+                    node.span.line, node.span.col,
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Handles `as StructType` conformance checking (§6.3).

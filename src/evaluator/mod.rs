@@ -7,6 +7,7 @@ mod enums;
 mod eval_node;
 mod functions;
 mod import;
+mod stdlib;
 mod member;
 mod ops;
 mod structs;
@@ -158,141 +159,168 @@ impl Evaluator {
 
         for idx in order {
             let binding = &bindings[idx];
+            self.eval_single_binding(binding, scope)?;
+        }
 
-            // Reject `undefined` literal as binding value (spec §3.1)
-            if matches!(binding.value.kind, NodeKind::UndefinedLiteral) {
-                return Err(UzonError::syntax(
-                    "literal 'undefined' cannot be assigned to a binding; use expressions like self.missing instead",
+        Ok(())
+    }
+
+    /// Evaluate a single binding: validate, compute value, apply list type annotation,
+    /// check constraints, and register into scope.
+    fn eval_single_binding(&mut self, binding: &Binding, scope: &mut Scope) -> Result<()> {
+        // Reject `undefined` literal as binding value (spec §3.1)
+        if matches!(binding.value.kind, NodeKind::UndefinedLiteral) {
+            return Err(UzonError::syntax(
+                "literal 'undefined' cannot be assigned to a binding; use expressions like self.missing instead",
+                binding.value.span.line,
+                binding.value.span.col,
+            ));
+        }
+
+        // Handle field extraction (`of`) — use binding name as key
+        let mut value = if let NodeKind::FieldExtraction { ref source } = binding.value.kind {
+            let source_val = self.eval_node(source, scope, Some(&binding.name))?;
+            if source_val.is_undefined() {
+                Value::Undefined
+            } else if let Value::Struct(fields) = &source_val {
+                fields.get(&binding.name).cloned().unwrap_or(Value::Undefined)
+            } else {
+                return Err(UzonError::type_error(
+                    format!("'of' requires a struct, got {}", source_val.type_name()),
                     binding.value.span.line,
                     binding.value.span.col,
                 ));
             }
+        } else {
+            self.eval_node(&binding.value, scope, Some(&binding.name))?
+        };
 
-            // Handle field extraction (`of`) — use binding name as key
-            let mut value = if let NodeKind::FieldExtraction { ref source } = binding.value.kind {
-                let source_val = self.eval_node(source, scope, Some(&binding.name))?;
-                if source_val.is_undefined() {
-                    Value::Undefined
-                } else if let Value::Struct(fields) = &source_val {
-                    fields.get(&binding.name).cloned().unwrap_or(Value::Undefined)
-                } else {
-                    return Err(UzonError::type_error(
-                        format!("'of' requires a struct, got {}", source_val.type_name()),
-                        binding.value.span.line,
-                        binding.value.span.col,
-                    ));
-                }
-            } else {
-                self.eval_node(&binding.value, scope, Some(&binding.name))?
-            };
+        // Handle list type annotation for `are` bindings (e.g., `ids are 1, 2, 3 as [i32]`)
+        self.apply_list_type_annotation(binding, &mut value, scope)?;
 
-            // Handle list type annotation for `are` bindings (e.g., `ids are 1, 2, 3 as [i32]`)
-            if let Some(ref type_ann) = binding.list_type_annotation {
-                if type_ann.is_list {
-                    // §3.5 rule 4: enum type-context inference via `are ... as [EnumType]`
-                    if let Some(ref inner) = type_ann.inner {
-                        let enum_info = scope.resolve_type_path(&inner.path).and_then(|td| {
-                            if let TypeDefKind::Enum { variants } = td.kind {
-                                Some((td.name, variants))
-                            } else { None }
-                        });
-                        if let Some((enum_name, variants)) = enum_info {
-                            if let NodeKind::ListLiteral { elements } = &binding.value.kind {
-                                let mut resolved = Vec::with_capacity(elements.len());
-                                for elem in elements {
-                                    let v = if let NodeKind::Identifier { ref name } = elem.kind {
-                                        if variants.contains(name) {
-                                            Value::Enum(UzonEnum::new(
-                                                name.clone(), variants.clone(), Some(enum_name.clone()),
-                                            ))
-                                        } else {
-                                            self.eval_node(elem, scope, Some(&binding.name))?
-                                        }
-                                    } else {
-                                        self.eval_node(elem, scope, Some(&binding.name))?
-                                    };
-                                    if !v.is_null() {
-                                        if let Some(inner_type_name) = inner.path.last() {
-                                            self.check_type_assertion(&v, inner_type_name, &binding.value)?;
-                                        }
-                                    }
-                                    resolved.push(v);
+        // Spec §3.4: empty list or all-null list without type annotation is rejected
+        Self::check_list_annotation_required(&value, binding)?;
+
+        // §3.2: Duplicate binding names are forbidden UNLESS the new binding
+        // references self.<name> (self-exclusion pattern, §5.12).
+        if scope.has(&binding.name) {
+            if !Self::expr_references_self_name(&binding.value, &binding.name) {
+                return Err(UzonError::syntax(
+                    format!("duplicate binding '{}' in the same scope", binding.name),
+                    binding.span.line,
+                    binding.span.col,
+                ));
+            }
+        }
+
+        // Set type_name on enum/union/tagged-union values when `called` is present
+        let value = if let Some(ref type_name) = binding.called {
+            self.set_type_name(value, type_name)
+        } else {
+            value
+        };
+
+        // Register type if `called` is present
+        if let Some(ref type_name) = binding.called {
+            if scope.get_type(type_name).is_some() {
+                return Err(UzonError::syntax(
+                    format!("duplicate type name '{type_name}'"),
+                    binding.span.line,
+                    binding.span.col,
+                ));
+            }
+            self.register_type(type_name, &value, &binding.value, scope)?;
+        }
+
+        scope.define(&binding.name, value);
+        Ok(())
+    }
+
+    /// Apply list type annotation from `are ... as [Type]` bindings.
+    fn apply_list_type_annotation(
+        &mut self,
+        binding: &Binding,
+        value: &mut Value,
+        scope: &mut Scope,
+    ) -> Result<()> {
+        let type_ann = match binding.list_type_annotation {
+            Some(ref ta) => ta,
+            None => return Ok(()),
+        };
+
+        if type_ann.is_list {
+            // §3.5 rule 4: enum type-context inference via `are ... as [EnumType]`
+            if let Some(ref inner) = type_ann.inner {
+                let enum_info = scope.resolve_type_path(&inner.path).and_then(|td| {
+                    if let TypeDefKind::Enum { variants } = td.kind {
+                        Some((td.name, variants))
+                    } else { None }
+                });
+                if let Some((enum_name, variants)) = enum_info {
+                    if let NodeKind::ListLiteral { elements } = &binding.value.kind {
+                        let mut resolved = Vec::with_capacity(elements.len());
+                        for elem in elements {
+                            let v = if let NodeKind::Identifier { ref name } = elem.kind {
+                                if variants.contains(name) {
+                                    Value::Enum(UzonEnum::new(
+                                        name.clone(), variants.clone(), Some(enum_name.clone()),
+                                    ))
+                                } else {
+                                    self.eval_node(elem, scope, Some(&binding.name))?
                                 }
-                                value = Value::List(resolved);
+                            } else {
+                                self.eval_node(elem, scope, Some(&binding.name))?
+                            };
+                            if !v.is_null() {
+                                if let Some(inner_type_name) = inner.path.last() {
+                                    self.check_type_assertion(&v, inner_type_name, &binding.value)?;
+                                }
                             }
-                        } else if let Value::List(ref items) = value {
-                            if let Some(inner_type_name) = inner.path.last() {
-                                for item in items {
-                                    if !item.is_null() {
-                                        self.check_type_assertion(item, inner_type_name, &binding.value)?;
-                                    }
-                                }
+                            resolved.push(v);
+                        }
+                        *value = Value::List(resolved);
+                    }
+                } else if let Value::List(items) = &*value {
+                    if let Some(inner_type_name) = inner.path.last() {
+                        for item in items {
+                            if !item.is_null() {
+                                self.check_type_assertion(item, inner_type_name, &binding.value)?;
                             }
                         }
                     }
-                } else if let Some(type_name) = type_ann.path.last() {
+                }
+            }
+        } else if let Some(type_name) = type_ann.path.last() {
+            return Err(UzonError::type_error(
+                format!("cannot annotate list as {type_name}; use as [{type_name}] for list type annotation"),
+                binding.value.span.line, binding.value.span.col,
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Check that lists that need type annotations have them (§3.4).
+    fn check_list_annotation_required(value: &Value, binding: &Binding) -> Result<()> {
+        if let Value::List(items) = value {
+            if items.is_empty() {
+                if matches!(binding.value.kind, NodeKind::ListLiteral { ref elements } if elements.is_empty()) {
                     return Err(UzonError::type_error(
-                        format!("cannot annotate list as {type_name}; use as [{type_name}] for list type annotation"),
+                        "empty list requires a type annotation: [] as [Type]",
                         binding.value.span.line, binding.value.span.col,
                     ));
                 }
             }
-
-            // Spec §3.4: empty list or all-null list without type annotation is rejected
-            if let Value::List(ref items) = value {
-                if items.is_empty() {
-                    if matches!(binding.value.kind, NodeKind::ListLiteral { ref elements } if elements.is_empty()) {
-                        return Err(UzonError::type_error(
-                            "empty list requires a type annotation: [] as [Type]",
-                            binding.value.span.line, binding.value.span.col,
-                        ));
-                    }
-                }
-                // §3.4: all-null list without type annotation requires as [Type]
-                if !items.is_empty() && items.iter().all(|v| v.is_null()) {
-                    if !matches!(binding.value.kind, NodeKind::TypeAnnotation { .. }) {
-                        return Err(UzonError::type_error(
-                            "list with only null elements requires a type annotation: as [Type]",
-                            binding.value.span.line, binding.value.span.col,
-                        ));
-                    }
-                }
-            }
-
-            // §3.2: Duplicate binding names are forbidden UNLESS the new binding
-            // references self.<name> (self-exclusion pattern, §5.12).
-            if scope.has(&binding.name) {
-                if !Self::expr_references_self_name(&binding.value, &binding.name) {
-                    return Err(UzonError::syntax(
-                        format!("duplicate binding '{}' in the same scope", binding.name),
-                        binding.span.line,
-                        binding.span.col,
+            // §3.4: all-null list without type annotation requires as [Type]
+            if !items.is_empty() && items.iter().all(|v| v.is_null()) {
+                if !matches!(binding.value.kind, NodeKind::TypeAnnotation { .. }) {
+                    return Err(UzonError::type_error(
+                        "list with only null elements requires a type annotation: as [Type]",
+                        binding.value.span.line, binding.value.span.col,
                     ));
                 }
             }
-
-            // Set type_name on enum/union/tagged-union values when `called` is present
-            let value = if let Some(ref type_name) = binding.called {
-                self.set_type_name(value, type_name)
-            } else {
-                value
-            };
-
-            // Register type if `called` is present
-            if let Some(ref type_name) = binding.called {
-                if scope.get_type(type_name).is_some() {
-                    return Err(UzonError::syntax(
-                        format!("duplicate type name '{type_name}'"),
-                        binding.span.line,
-                        binding.span.col,
-                    ));
-                }
-                self.register_type(type_name, &value, &binding.value, scope)?;
-            }
-
-            scope.define(&binding.name, value);
         }
-
         Ok(())
     }
 
