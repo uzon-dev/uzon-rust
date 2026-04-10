@@ -49,90 +49,10 @@ impl Evaluator {
                 self.eval_unary_op(*op, operand, scope, exclude, node)
             }
             NodeKind::OrElse { left, right } => {
-                let lv = self.eval_node(left, scope, exclude)?;
-                if lv.is_undefined() {
-                    self.eval_node(right, scope, exclude)
-                } else {
-                    // §5.7: both operands MUST be the same type.
-                    // §3.5 rule 4: enum type-context inference for or else right operand.
-                    let rv_result = if let Value::Enum(ref e) = lv {
-                        self.resolve_enum_context(right, e, scope, exclude)
-                    } else {
-                        self.eval_node(right, scope, exclude)
-                    };
-                    if let Ok(rv) = rv_result {
-                        if !matches!(lv, Value::Null) && !matches!(rv, Value::Null)
-                            && !rv.is_undefined()
-                        {
-                            if lv.type_name() != rv.type_name() {
-                                return Err(UzonError::type_error(
-                                    format!(
-                                        "'or else' operands must be the same type, got {} and {}",
-                                        lv.type_name(), rv.type_name()
-                                    ),
-                                    node.span.line, node.span.col,
-                                ));
-                            }
-                            // D.3: exact numeric type_ann must be compatible
-                            match (&lv, &rv) {
-                                (Value::Integer(li), Value::Integer(ri)) => {
-                                    if let Err(msg) = UzonInteger::adopt_type(&li.type_ann, &ri.type_ann) {
-                                        return Err(UzonError::type_error(
-                                            format!("'or else' operands must be the same type: {msg}"),
-                                            node.span.line, node.span.col,
-                                        ));
-                                    }
-                                }
-                                (Value::Float(lf), Value::Float(rf)) => {
-                                    if let Err(msg) = UzonFloat::adopt_type(&lf.type_ann, &rf.type_ann) {
-                                        return Err(UzonError::type_error(
-                                            format!("'or else' operands must be the same type: {msg}"),
-                                            node.span.line, node.span.col,
-                                        ));
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    Ok(lv)
-                }
+                self.eval_or_else(left, right, scope, exclude, node)
             }
             NodeKind::IfExpr { condition, then_branch, else_branch } => {
-                let cond = self.eval_node(condition, scope, exclude)?;
-                let cond = Self::unwrap_union_owned(cond);
-                match cond {
-                    Value::Bool(true) => {
-                        let then_val = self.eval_node(then_branch, scope, exclude)?;
-                        // §5.9: speculative type check of else branch
-                        let else_result = if let Value::Enum(ref e) = then_val {
-                            self.resolve_enum_context(else_branch, e, scope, exclude)
-                        } else {
-                            self.eval_node(else_branch, scope, exclude)
-                        };
-                        if let Ok(else_val) = else_result {
-                            Self::check_branch_types(&then_val, &else_val, node)?;
-                        }
-                        Ok(then_val)
-                    }
-                    Value::Bool(false) => {
-                        let else_val = self.eval_node(else_branch, scope, exclude)?;
-                        // §5.9: speculative type check of then branch
-                        let then_result = if let Value::Enum(ref e) = else_val {
-                            self.resolve_enum_context(then_branch, e, scope, exclude)
-                        } else {
-                            self.eval_node(then_branch, scope, exclude)
-                        };
-                        if let Ok(then_val) = then_result {
-                            Self::check_branch_types(&then_val, &else_val, node)?;
-                        }
-                        Ok(else_val)
-                    }
-                    _ => Err(UzonError::type_error(
-                        format!("if condition must be bool, got {}", cond.type_name()),
-                        node.span.line, node.span.col,
-                    )),
-                }
+                self.eval_if_expr(condition, then_branch, else_branch, scope, exclude, node)
             }
             NodeKind::CaseExpr { scrutinee, when_clauses, else_branch } => {
                 self.eval_case(scrutinee, when_clauses, else_branch, scope, exclude, node)
@@ -205,6 +125,112 @@ impl Evaluator {
             NodeKind::FieldExtraction { .. } => {
                 Err(UzonError::runtime("'of' can only be used directly after 'is' in a binding", node.span.line, node.span.col))
             }
+        }
+    }
+
+    // === Or-else and if-then-else ===
+
+    /// §5.7: `or else` — returns left if defined, else right. Both operands must be the same type.
+    fn eval_or_else(
+        &mut self,
+        left: &Node,
+        right: &Node,
+        scope: &mut Scope,
+        exclude: Option<&str>,
+        node: &Node,
+    ) -> Result<Value> {
+        let lv = self.eval_node(left, scope, exclude)?;
+        if lv.is_undefined() {
+            return self.eval_node(right, scope, exclude);
+        }
+        // §5.7: both operands MUST be the same type.
+        // §3.5 rule 4: enum type-context inference for or else right operand.
+        let rv_result = if let Value::Enum(ref e) = lv {
+            self.resolve_enum_context(right, e, scope, exclude)
+        } else {
+            self.eval_node(right, scope, exclude)
+        };
+        if let Ok(rv) = rv_result {
+            if !matches!(lv, Value::Null) && !matches!(rv, Value::Null)
+                && !rv.is_undefined()
+            {
+                if lv.type_name() != rv.type_name() {
+                    return Err(UzonError::type_error(
+                        format!(
+                            "'or else' operands must be the same type, got {} and {}",
+                            lv.type_name(), rv.type_name()
+                        ),
+                        node.span.line, node.span.col,
+                    ));
+                }
+                // D.3: exact numeric type_ann must be compatible
+                match (&lv, &rv) {
+                    (Value::Integer(li), Value::Integer(ri)) => {
+                        if let Err(msg) = UzonInteger::adopt_type(&li.type_ann, &ri.type_ann) {
+                            return Err(UzonError::type_error(
+                                format!("'or else' operands must be the same type: {msg}"),
+                                node.span.line, node.span.col,
+                            ));
+                        }
+                    }
+                    (Value::Float(lf), Value::Float(rf)) => {
+                        if let Err(msg) = UzonFloat::adopt_type(&lf.type_ann, &rf.type_ann) {
+                            return Err(UzonError::type_error(
+                                format!("'or else' operands must be the same type: {msg}"),
+                                node.span.line, node.span.col,
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(lv)
+    }
+
+    /// §5.9: if-then-else expression with speculative type checking of both branches.
+    fn eval_if_expr(
+        &mut self,
+        condition: &Node,
+        then_branch: &Node,
+        else_branch: &Node,
+        scope: &mut Scope,
+        exclude: Option<&str>,
+        node: &Node,
+    ) -> Result<Value> {
+        let cond = self.eval_node(condition, scope, exclude)?;
+        let cond = Self::unwrap_union_owned(cond);
+        match cond {
+            Value::Bool(true) => {
+                let then_val = self.eval_node(then_branch, scope, exclude)?;
+                // §5.9: speculative type check of else branch
+                let else_result = if let Value::Enum(ref e) = then_val {
+                    self.resolve_enum_context(else_branch, e, scope, exclude)
+                } else {
+                    self.eval_node(else_branch, scope, exclude)
+                };
+                if let Ok(else_val) = else_result {
+                    Self::check_branch_types(&then_val, &else_val, node)?;
+                }
+                Ok(then_val)
+            }
+            Value::Bool(false) => {
+                let else_val = self.eval_node(else_branch, scope, exclude)?;
+                // §5.9: speculative type check of then branch
+                let then_result = if let Value::Enum(ref e) = else_val {
+                    self.resolve_enum_context(then_branch, e, scope, exclude)
+                } else {
+                    self.eval_node(then_branch, scope, exclude)
+                };
+                if let Ok(then_val) = then_result {
+                    Self::check_branch_types(&then_val, &else_val, node)?;
+                }
+                Ok(else_val)
+            }
+            _ => Err(UzonError::type_error(
+                format!("if condition must be bool, got {}", cond.type_name()),
+                node.span.line, node.span.col,
+            )),
         }
     }
 
