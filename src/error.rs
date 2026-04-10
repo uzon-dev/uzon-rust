@@ -37,18 +37,22 @@ pub enum UzonError {
     Syntax {
         message: String,
         location: Option<Location>,
+        import_trace: Vec<Location>,
     },
     Type {
         message: String,
         location: Option<Location>,
+        import_trace: Vec<Location>,
     },
     Runtime {
         message: String,
         location: Option<Location>,
+        import_trace: Vec<Location>,
     },
     Circular {
         message: String,
         location: Option<Location>,
+        import_trace: Vec<Location>,
     },
 }
 
@@ -57,6 +61,7 @@ impl UzonError {
         UzonError::Syntax {
             message: message.into(),
             location: Some(Location { line, col, filename: None }),
+            import_trace: Vec::new(),
         }
     }
 
@@ -64,6 +69,7 @@ impl UzonError {
         UzonError::Type {
             message: message.into(),
             location: Some(Location { line, col, filename: None }),
+            import_trace: Vec::new(),
         }
     }
 
@@ -71,6 +77,7 @@ impl UzonError {
         UzonError::Runtime {
             message: message.into(),
             location: Some(Location { line, col, filename: None }),
+            import_trace: Vec::new(),
         }
     }
 
@@ -78,6 +85,7 @@ impl UzonError {
         UzonError::Circular {
             message: message.into(),
             location: Some(Location { line, col, filename: None }),
+            import_trace: Vec::new(),
         }
     }
 
@@ -96,38 +104,54 @@ impl UzonError {
         }
         self
     }
+
+    /// Push an import callsite onto the trace. The most recent import site
+    /// is pushed last, so the trace reads innermost-first (like a stack trace).
+    pub fn with_import_site(mut self, line: usize, col: usize, filename: Option<String>) -> Self {
+        let trace = match &mut self {
+            UzonError::Syntax { import_trace, .. }
+            | UzonError::Type { import_trace, .. }
+            | UzonError::Runtime { import_trace, .. }
+            | UzonError::Circular { import_trace, .. } => import_trace,
+        };
+        trace.push(Location { line, col, filename });
+        self
+    }
+}
+
+/// Format a single error line: `{ErrorType} at {location}: {message}`
+fn write_error_line(
+    f: &mut fmt::Formatter<'_>,
+    kind: &str,
+    message: &str,
+    location: &Option<Location>,
+    import_trace: &[Location],
+) -> fmt::Result {
+    write!(f, "{kind}")?;
+    if let Some(loc) = location {
+        write!(f, " at {loc}")?;
+    }
+    write!(f, ": {message}")?;
+    for site in import_trace.iter().rev() {
+        write!(f, "\n  imported at {site}")?;
+    }
+    Ok(())
 }
 
 impl fmt::Display for UzonError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            UzonError::Syntax { message, location } => {
-                write!(f, "SyntaxError")?;
-                if let Some(loc) = location {
-                    write!(f, " at {loc}")?;
-                }
-                write!(f, ": {message}")
+            UzonError::Syntax { message, location, import_trace } => {
+                write_error_line(f, "SyntaxError", message, location, import_trace)
             }
-            UzonError::Type { message, location } => {
-                write!(f, "TypeError")?;
-                if let Some(loc) = location {
-                    write!(f, " at {loc}")?;
-                }
-                write!(f, ": {message}")
+            UzonError::Type { message, location, import_trace } => {
+                write_error_line(f, "TypeError", message, location, import_trace)
             }
-            UzonError::Runtime { message, location } => {
-                write!(f, "RuntimeError")?;
-                if let Some(loc) = location {
-                    write!(f, " at {loc}")?;
-                }
-                write!(f, ": {message}")
+            UzonError::Runtime { message, location, import_trace } => {
+                write_error_line(f, "RuntimeError", message, location, import_trace)
             }
-            UzonError::Circular { message, location } => {
-                write!(f, "CircularError")?;
-                if let Some(loc) = location {
-                    write!(f, " at {loc}")?;
-                }
-                write!(f, ": {message}")
+            UzonError::Circular { message, location, import_trace } => {
+                write_error_line(f, "CircularError", message, location, import_trace)
             }
         }
     }
