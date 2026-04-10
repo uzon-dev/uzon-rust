@@ -1,0 +1,581 @@
+// SPDX-FileCopyrightText: © 2026 Suho Kang
+// SPDX-License-Identifier: MIT
+
+use std::collections::BTreeMap;
+use std::fmt::Write;
+
+use crate::value::*;
+
+/// Options for UZON text generation (Appendix E).
+pub struct StringifyOptions {
+    /// Number of spaces per indentation level.
+    pub indent: usize,
+    /// Maximum number of struct fields for inline formatting.
+    pub inline_threshold: usize,
+}
+
+impl Default for StringifyOptions {
+    fn default() -> Self {
+        Self {
+            indent: 4,
+            inline_threshold: 4,
+        }
+    }
+}
+
+/// Generate UZON text from a map of bindings with default formatting.
+pub fn to_string(values: &BTreeMap<String, Value>) -> String {
+    to_string_with_options(values, &StringifyOptions::default())
+}
+
+/// Generate UZON text from a map of bindings with custom options.
+pub fn to_string_with_options(values: &BTreeMap<String, Value>, options: &StringifyOptions) -> String {
+    let mut out = String::new();
+    let names: Vec<&String> = values.keys().collect();
+    for (i, name) in names.iter().enumerate() {
+        let value = &values[*name];
+        write_binding(&mut out, name, value, 0, options);
+        if i + 1 < names.len() {
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// Write a single binding: `name is value` or `name are [items]` (E.4).
+fn write_binding(
+    out: &mut String,
+    name: &str,
+    value: &Value,
+    depth: usize,
+    options: &StringifyOptions,
+) {
+    write_indent(out, depth, options);
+    write_identifier(out, name);
+
+    // E.4: prefer `are` for non-empty lists
+    if let Value::List(items) = value {
+        if !items.is_empty() {
+            write_are_list(out, items, depth, options);
+            return;
+        }
+    }
+
+    out.push_str(" is ");
+    write_value(out, value, depth, options);
+    out.push('\n');
+}
+
+/// Write a list using `are` syntax (E.4).
+///
+/// Inline when short enough; multiline with commas otherwise (E.2).
+fn write_are_list(out: &mut String, items: &[Value], depth: usize, options: &StringifyOptions) {
+    // Try inline: `name are elem1, elem2, elem3`
+    if !has_nested_collection(items) {
+        let mut inline = String::from(" are ");
+        for (i, item) in items.iter().enumerate() {
+            if i > 0 {
+                inline.push_str(", ");
+            }
+            write_value(&mut inline, item, depth, options);
+        }
+        inline.push('\n');
+        if inline.len() <= 80 {
+            out.push_str(&inline);
+            return;
+        }
+    }
+
+    // Multiline: commas between elements, no trailing comma (E.2)
+    out.push_str(" are\n");
+    for (i, item) in items.iter().enumerate() {
+        write_indent(out, depth + 1, options);
+        write_value(out, item, depth + 1, options);
+        if i + 1 < items.len() {
+            out.push(',');
+        }
+        out.push('\n');
+    }
+}
+
+fn write_indent(out: &mut String, depth: usize, options: &StringifyOptions) {
+    for _ in 0..depth * options.indent {
+        out.push(' ');
+    }
+}
+
+/// Write an identifier, applying @-prefix escaping for keywords (§2.4)
+/// or single-quote quoting for non-standard identifiers.
+fn write_identifier(out: &mut String, name: &str) {
+    if name.is_empty() || needs_quoting(name) {
+        if is_stringify_keyword(name) {
+            out.push('@');
+            out.push_str(name);
+        } else {
+            out.push('\'');
+            out.push_str(name);
+            out.push('\'');
+        }
+    } else {
+        out.push_str(name);
+    }
+}
+
+/// Check if an identifier needs quoting or @-prefix escaping.
+fn needs_quoting(name: &str) -> bool {
+    if name.is_empty() {
+        return true;
+    }
+    let first = name.chars().next().unwrap();
+    if !first.is_alphabetic() && first != '_' {
+        return true;
+    }
+    for ch in name.chars() {
+        if !ch.is_alphanumeric() && ch != '_' && ch != '-' {
+            return true;
+        }
+    }
+    is_stringify_keyword(name)
+}
+
+/// Keywords that require @-prefix escaping when used as identifiers.
+fn is_stringify_keyword(name: &str) -> bool {
+    matches!(
+        name,
+        "is" | "are"
+            | "not" | "and" | "or"
+            | "if" | "then" | "else" | "case" | "when"
+            | "from" | "named" | "as" | "to" | "with" | "of" | "in"
+            | "called" | "struct" | "union"
+            | "true" | "false" | "null" | "undefined"
+            | "self" | "env" | "inf" | "nan"
+            | "function" | "returns" | "default" | "extends"
+            | "lazy" | "type"
+    )
+}
+
+/// Write a value in UZON syntax.
+fn write_value(out: &mut String, value: &Value, depth: usize, options: &StringifyOptions) {
+    match value {
+        Value::Null => out.push_str("null"),
+        Value::Undefined => out.push_str("undefined"),
+        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        Value::Integer(n) => write!(out, "{}", n.value).unwrap(),
+        Value::BigInteger(n) => write!(out, "{n}").unwrap(),
+        Value::Float(f) => write_float(out, f.value),
+        Value::String(s) => write_string(out, s),
+        Value::List(items) => write_list(out, items, depth, options),
+        Value::Tuple(t) => write_tuple(out, &t.elements, depth, options),
+        Value::Struct(fields) => write_struct(out, fields, depth, options),
+        Value::Enum(e) => write_enum(out, e),
+        Value::Union(u) => write_union(out, u, depth, options),
+        Value::TaggedUnion(tu) => write_tagged_union(out, tu, depth, options),
+        Value::Function(_) => out.push_str("<function>"),
+    }
+}
+
+/// Write a float using spec-compliant formatting (§5.11.2).
+fn write_float(out: &mut String, f: f64) {
+    out.push_str(&format_float(f));
+}
+
+/// Write a string with proper escape sequences (§4.4).
+fn write_string(out: &mut String, s: &str) {
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            '{' => out.push_str("\\{"),
+            _ => out.push(ch),
+        }
+    }
+    out.push('"');
+}
+
+/// Write a list in bracket syntax `[ ... ]`.
+fn write_list(out: &mut String, items: &[Value], depth: usize, options: &StringifyOptions) {
+    if items.is_empty() {
+        out.push_str("[]");
+        return;
+    }
+
+    if !has_nested_collection(items) {
+        let inline = format_inline_list(items, depth, options);
+        if inline.len() <= 80 {
+            out.push_str(&inline);
+            return;
+        }
+    }
+
+    // Multiline — newline-separated, no commas (E.2)
+    out.push_str("[\n");
+    for item in items.iter() {
+        write_indent(out, depth + 1, options);
+        write_value(out, item, depth + 1, options);
+        out.push('\n');
+    }
+    write_indent(out, depth, options);
+    out.push(']');
+}
+
+fn format_inline_list(items: &[Value], depth: usize, options: &StringifyOptions) -> String {
+    let mut s = String::from("[ ");
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            s.push_str(", ");
+        }
+        write_value(&mut s, item, depth, options);
+    }
+    s.push_str(" ]");
+    s
+}
+
+/// Write a tuple `(a, b, c)` with trailing comma for single-element (§3.3).
+fn write_tuple(out: &mut String, elements: &[Value], depth: usize, options: &StringifyOptions) {
+    if elements.is_empty() {
+        out.push_str("()");
+        return;
+    }
+
+    out.push('(');
+    for (i, elem) in elements.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        write_value(out, elem, depth, options);
+    }
+    if elements.len() == 1 {
+        out.push(',');
+    }
+    out.push(')');
+}
+
+/// Write a struct `{ name is value, ... }`.
+fn write_struct(
+    out: &mut String,
+    fields: &BTreeMap<String, Value>,
+    depth: usize,
+    options: &StringifyOptions,
+) {
+    if fields.is_empty() {
+        out.push_str("{}");
+        return;
+    }
+
+    if fields.len() <= options.inline_threshold && !has_nested_struct_fields(fields) {
+        let inline = format_inline_struct(fields, depth, options);
+        if inline.len() <= 80 {
+            out.push_str(&inline);
+            return;
+        }
+    }
+
+    out.push_str("{\n");
+    for (name, value) in fields {
+        write_binding(out, name, value, depth + 1, options);
+    }
+    write_indent(out, depth, options);
+    out.push('}');
+}
+
+fn format_inline_struct(
+    fields: &BTreeMap<String, Value>,
+    depth: usize,
+    options: &StringifyOptions,
+) -> String {
+    let mut s = String::from("{ ");
+    let entries: Vec<_> = fields.iter().collect();
+    for (i, (name, value)) in entries.iter().enumerate() {
+        if i > 0 {
+            s.push_str(", ");
+        }
+        write_identifier(&mut s, name);
+        s.push_str(" is ");
+        write_value(&mut s, value, depth, options);
+    }
+    s.push_str(" }");
+    s
+}
+
+fn has_nested_collection(items: &[Value]) -> bool {
+    items.iter().any(|v| matches!(v, Value::Struct(_) | Value::List(_) | Value::Tuple(_)))
+}
+
+fn has_nested_struct_fields(fields: &BTreeMap<String, Value>) -> bool {
+    fields.values().any(|v| matches!(v, Value::Struct(_) | Value::List(_) | Value::Tuple(_)))
+}
+
+/// Write an enum value: `variant from v1, v2, v3` (§3.5).
+fn write_enum(out: &mut String, e: &UzonEnum) {
+    write_identifier(out, &e.value);
+    out.push_str(" from ");
+    for (i, v) in e.variants.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        write_identifier(out, v);
+    }
+    if let Some(ref type_name) = e.type_name {
+        out.push_str(" called ");
+        write_identifier(out, type_name);
+    }
+}
+
+/// Write a union value: `value from union type1, type2` (§3.6).
+fn write_union(out: &mut String, u: &UzonUnion, depth: usize, options: &StringifyOptions) {
+    write_value(out, &u.value, depth, options);
+    out.push_str(" from union ");
+    for (i, t) in u.types.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push_str(t);
+    }
+    if let Some(ref type_name) = u.type_name {
+        out.push_str(" called ");
+        write_identifier(out, type_name);
+    }
+}
+
+/// Write a tagged union value: `value named tag from v1, v2` (§3.7).
+fn write_tagged_union(
+    out: &mut String,
+    tu: &UzonTaggedUnion,
+    depth: usize,
+    options: &StringifyOptions,
+) {
+    write_value(out, &tu.value, depth, options);
+    out.push_str(" named ");
+    write_identifier(out, &tu.tag);
+    out.push_str(" from ");
+    let entries: Vec<_> = tu.variants.iter().collect();
+    for (i, (name, type_ref)) in entries.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        write_identifier(out, name);
+        if let Some(t) = type_ref {
+            out.push_str(" as ");
+            out.push_str(t);
+        }
+    }
+    if let Some(ref type_name) = tu.type_name {
+        out.push_str(" called ");
+        write_identifier(out, type_name);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simple_values() {
+        let mut map = BTreeMap::new();
+        map.insert("a".into(), Value::int(42));
+        map.insert("b".into(), Value::String("hello".into()));
+        map.insert("c".into(), Value::Bool(true));
+        map.insert("d".into(), Value::Null);
+        let result = to_string(&map);
+        assert!(result.contains("a is 42"));
+        assert!(result.contains("b is \"hello\""));
+        assert!(result.contains("c is true"));
+        assert!(result.contains("d is null"));
+    }
+
+    #[test]
+    fn test_float_values() {
+        let mut map = BTreeMap::new();
+        map.insert("x".into(), Value::float(3.14));
+        map.insert("y".into(), Value::float(1.0));
+        map.insert("z".into(), Value::float(f64::INFINITY));
+        map.insert("w".into(), Value::float(f64::NAN));
+        let result = to_string(&map);
+        assert!(result.contains("x is 3.14"));
+        assert!(result.contains("y is 1.0"));
+        assert!(result.contains("z is inf"));
+        assert!(result.contains("w is nan"));
+    }
+
+    #[test]
+    fn test_neg_inf() {
+        let mut map = BTreeMap::new();
+        map.insert("x".into(), Value::float(f64::NEG_INFINITY));
+        let result = to_string(&map);
+        assert!(result.contains("x is -inf"));
+    }
+
+    #[test]
+    fn test_string_escaping() {
+        let mut map = BTreeMap::new();
+        map.insert("s".into(), Value::String("line1\nline2".into()));
+        map.insert("q".into(), Value::String("say \"hi\"".into()));
+        map.insert("b".into(), Value::String("{braces}".into()));
+        let result = to_string(&map);
+        assert!(result.contains(r#"s is "line1\nline2""#));
+        assert!(result.contains(r#"q is "say \"hi\"""#));
+        assert!(result.contains(r#"b is "\{braces}"#));
+    }
+
+    #[test]
+    fn test_list_are_syntax() {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "items".into(),
+            Value::List(vec![Value::int(1), Value::int(2), Value::int(3)]),
+        );
+        let result = to_string(&map);
+        assert!(result.contains("items are 1, 2, 3"));
+    }
+
+    #[test]
+    fn test_empty_list() {
+        let mut map = BTreeMap::new();
+        map.insert("items".into(), Value::List(vec![]));
+        let result = to_string(&map);
+        assert!(result.contains("items is []"));
+    }
+
+    #[test]
+    fn test_tuple() {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "t".into(),
+            Value::Tuple(UzonTuple::new(vec![
+                Value::int(1),
+                Value::String("hello".into()),
+            ])),
+        );
+        let result = to_string(&map);
+        assert!(result.contains("t is (1, \"hello\")"));
+    }
+
+    #[test]
+    fn test_single_element_tuple() {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "t".into(),
+            Value::Tuple(UzonTuple::new(vec![Value::int(42)])),
+        );
+        let result = to_string(&map);
+        assert!(result.contains("t is (42,)"));
+    }
+
+    #[test]
+    fn test_struct_inline() {
+        let mut fields = BTreeMap::new();
+        fields.insert("x".into(), Value::int(1));
+        fields.insert("y".into(), Value::int(2));
+        let mut map = BTreeMap::new();
+        map.insert("point".into(), Value::Struct(fields));
+        let result = to_string(&map);
+        assert!(result.contains("point is { x is 1, y is 2 }"));
+    }
+
+    #[test]
+    fn test_enum() {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "color".into(),
+            Value::Enum(UzonEnum::new(
+                "red",
+                vec!["red".into(), "green".into(), "blue".into()],
+                None,
+            )),
+        );
+        let result = to_string(&map);
+        assert!(result.contains("color is red from red, green, blue"));
+    }
+
+    #[test]
+    fn test_identifier_quoting() {
+        let mut map = BTreeMap::new();
+        map.insert("Content-Type".into(), Value::String("text/html".into()));
+        let result = to_string(&map);
+        assert!(result.contains("Content-Type is \"text/html\""));
+    }
+
+    #[test]
+    fn test_keyword_identifier_quoting() {
+        let mut fields = BTreeMap::new();
+        fields.insert("is".into(), Value::int(1));
+        let mut map = BTreeMap::new();
+        map.insert("s".into(), Value::Struct(fields));
+        let result = to_string(&map);
+        assert!(result.contains("@is is 1"), "expected @is, got: {result}");
+    }
+
+    #[test]
+    fn test_undefined() {
+        let mut map = BTreeMap::new();
+        map.insert("x".into(), Value::Undefined);
+        let result = to_string(&map);
+        assert!(result.contains("x is undefined"));
+    }
+
+    #[test]
+    fn test_empty_struct() {
+        let mut map = BTreeMap::new();
+        map.insert("s".into(), Value::Struct(BTreeMap::new()));
+        let result = to_string(&map);
+        assert!(result.contains("s is {}"));
+    }
+
+    #[test]
+    fn test_empty_tuple() {
+        let mut map = BTreeMap::new();
+        map.insert("t".into(), Value::Tuple(UzonTuple::new(vec![])));
+        let result = to_string(&map);
+        assert!(result.contains("t is ()"));
+    }
+
+    #[test]
+    fn test_roundtrip() {
+        let input = "x is 42\ny is \"hello\"\nz is true\nw is null";
+        let result1 = crate::evaluator::from_str(input).unwrap();
+        let text = to_string(&result1);
+        let result2 = crate::evaluator::from_str(&text).unwrap();
+        assert_eq!(result1, result2);
+    }
+
+    #[test]
+    fn test_roundtrip_struct() {
+        let input = "s is { a is 1, b is \"two\" }";
+        let result1 = crate::evaluator::from_str(input).unwrap();
+        let text = to_string(&result1);
+        let result2 = crate::evaluator::from_str(&text).unwrap();
+        assert_eq!(result1, result2);
+    }
+
+    #[test]
+    fn test_roundtrip_enum() {
+        let input = "e is green from red, green, blue";
+        let result1 = crate::evaluator::from_str(input).unwrap();
+        let text = to_string(&result1);
+        let result2 = crate::evaluator::from_str(&text).unwrap();
+        assert_eq!(result1, result2);
+    }
+
+    #[test]
+    fn test_roundtrip_list() {
+        let input = "items are 1, 2, 3";
+        let result1 = crate::evaluator::from_str(input).unwrap();
+        let text = to_string(&result1);
+        let result2 = crate::evaluator::from_str(&text).unwrap();
+        assert_eq!(result1, result2);
+    }
+
+    #[test]
+    fn test_roundtrip_nested_struct() {
+        let input = "config is {\n    host is \"localhost\"\n    port is 8080\n}";
+        let result1 = crate::evaluator::from_str(input).unwrap();
+        let text = to_string(&result1);
+        let result2 = crate::evaluator::from_str(&text).unwrap();
+        assert_eq!(result1, result2);
+    }
+}
