@@ -4,6 +4,7 @@
 mod format;
 mod numeric;
 pub mod ops;
+pub mod serde_impl;
 
 pub use format::format_float;
 pub use numeric::{FloatType, IntegerType, UzonFloat, UzonInteger};
