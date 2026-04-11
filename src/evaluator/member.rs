@@ -30,7 +30,7 @@ impl Evaluator {
 
         // §5.12: member access on null is an error
         if obj.is_null() {
-            return Err(UzonError::runtime(
+            return Err(UzonError::type_error(
                 "cannot access member on null; null is a value, not a missing state",
                 node.span.line, node.span.col,
             ));
