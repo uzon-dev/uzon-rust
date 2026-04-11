@@ -62,7 +62,7 @@ impl Evaluator {
             Value::List(items) => Ok(Value::int(items.len() as i128)),
             Value::Tuple(t) => Ok(Value::int(t.len() as i128)),
             Value::Struct(fields) => Ok(Value::int(fields.len() as i128)),
-            Value::String(s) => Ok(Value::int(s.len() as i128)),
+            Value::String(s) => Ok(Value::int(s.chars().count() as i128)),
             other => Err(UzonError::type_error(
                 format!("std.len does not support {}", other.type_name()),
                 node.span.line, node.span.col,
