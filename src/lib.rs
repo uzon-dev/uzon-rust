@@ -1,6 +1,34 @@
 // SPDX-FileCopyrightText: © 2026 Suho Kang
 // SPDX-License-Identifier: MIT
 
+//! # uzon
+//!
+//! A Rust library for parsing, evaluating, and manipulating
+//! [UZON](https://uzon.dev) — a typed, human-readable data expression format.
+//!
+//! ## Quick Start
+//!
+//! ```ignore
+//! use uzon::{from_str, uzon, Value};
+//!
+//! // Parse UZON text
+//! let bindings = from_str(r#"name is "Alice"  age is 30"#).unwrap();
+//! assert_eq!(bindings["name"].as_str(), Some("Alice"));
+//!
+//! // Build values programmatically
+//! let v = uzon!({"name": "Bob", "age": 25});
+//!
+//! // Arithmetic
+//! assert_eq!(Value::int(10) + Value::int(20), Value::int(30));
+//!
+//! // Deserialize into Rust types
+//! #[derive(serde::Deserialize)]
+//! struct Config { host: String, port: u16 }
+//! let config: Config = uzon::from_str_as(r#"host is "localhost"  port is 8080"#).unwrap();
+//! ```
+//!
+//! See the [README](https://github.com/uzon-dev/uzon-rust) for full API documentation.
+
 pub mod ast;
 pub mod error;
 pub mod evaluator;
