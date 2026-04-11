@@ -612,7 +612,8 @@ impl Evaluator {
             if type_name == "string" || type_name == "null" {
                 // identity or to-string conversions are permitted
             } else {
-                return Err(UzonError::runtime(
+                // §5.11: conversions not in the permitted table are type errors
+                return Err(UzonError::type_error(
                     format!("cannot convert null to {type_name}"),
                     node.span.line, node.span.col,
                 ));
@@ -641,7 +642,16 @@ impl Evaluator {
                 )),
             },
             // §5.11.0: to null — only null → null (identity) is permitted
-            "null" => Ok(val),
+            "null" => {
+                if val.is_null() {
+                    Ok(val)
+                } else {
+                    Err(UzonError::type_error(
+                        format!("cannot convert {} to null", val.type_name()),
+                        node.span.line, node.span.col,
+                    ))
+                }
+            }
             _ if type_name.starts_with('i') || type_name.starts_with('u') || type_name.starts_with('f') => {
                 self.convert_numeric(val, type_name, node)
             }
@@ -678,6 +688,20 @@ impl Evaluator {
                         format!("cannot convert '{s}' to {type_name}; only \"inf\" is recognized, not \"infinity\""),
                         node.span.line, node.span.col,
                     ));
+                }
+                // §5.11.1: string-to-float recognizes hex/oct/bin integer prefixes (widening)
+                if s.starts_with("0x") || s.starts_with("0X")
+                    || s.starts_with("0o") || s.starts_with("0O")
+                    || s.starts_with("0b") || s.starts_with("0B")
+                    || s.starts_with("-0x") || s.starts_with("-0X")
+                    || s.starts_with("-0o") || s.starts_with("-0O")
+                    || s.starts_with("-0b") || s.starts_with("-0B")
+                {
+                    let n = self.eval_integer(&s, node)?;
+                    if let Value::Integer(i) = n {
+                        let parsed_float_type = FloatType::from_type_name(type_name).unwrap_or_default();
+                        return Ok(Value::Float(UzonFloat::with_type(i.value as f64, parsed_float_type)));
+                    }
                 }
                 let f: f64 = s.parse().map_err(|_| {
                     UzonError::runtime(format!("cannot convert '{s}' to {type_name}"), node.span.line, node.span.col)
