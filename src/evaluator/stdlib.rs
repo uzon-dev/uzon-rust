@@ -332,7 +332,17 @@ impl Evaluator {
         let delim = self.eval_node(&args[1], scope, exclude)?;
         match (Self::unwrap_union_owned(input), Self::unwrap_union_owned(delim)) {
             (Value::String(s), Value::String(d)) => {
-                let parts: Vec<Value> = s.split(&d).map(|p| Value::String(p.to_string())).collect();
+                // §5.16.4: rules checked in order — first match wins.
+                // 1. empty input → [""]
+                // 2. empty delimiter → split into Unicode scalar values
+                // 3. otherwise → split by delimiter
+                let parts: Vec<Value> = if s.is_empty() {
+                    vec![Value::String(String::new())]
+                } else if d.is_empty() {
+                    s.chars().map(|c| Value::String(c.to_string())).collect()
+                } else {
+                    s.split(&d).map(|p| Value::String(p.to_string())).collect()
+                };
                 Ok(Value::list(parts))
             }
             (Value::String(_), other) => Err(UzonError::type_error(
