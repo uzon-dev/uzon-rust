@@ -302,8 +302,29 @@ impl fmt::Display for Value {
             Value::Union(u) => write!(f, "{}", u.value),
             Value::TaggedUnion(tu) => write!(f, "{}", tu.value),
             Value::Function(_) => write!(f, "<function>"),
-            Value::List(_) | Value::Tuple(_) | Value::Struct(_) => {
-                write!(f, "[compound]")
+            Value::List(l) => {
+                write!(f, "[")?;
+                for (i, elem) in l.elements.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{elem}")?;
+                }
+                write!(f, "]")
+            }
+            Value::Tuple(t) => {
+                write!(f, "(")?;
+                for (i, elem) in t.elements.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{elem}")?;
+                }
+                write!(f, ")")
+            }
+            Value::Struct(fields) => {
+                write!(f, "{{")?;
+                for (i, (k, v)) in fields.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{k}: {v}")?;
+                }
+                write!(f, "}}")
             }
         }
     }
