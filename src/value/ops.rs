@@ -392,6 +392,121 @@ impl PartialOrd for Value {
 }
 
 // ============================================================
+// IntoIterator
+// ============================================================
+
+/// Iterator over borrowed `Value` elements.
+///
+/// Yields items from lists, tuples, or struct values (in insertion order).
+/// Non-iterable values yield an empty iterator.
+pub enum ValueIter<'a> {
+    Slice(std::slice::Iter<'a, Value>),
+    Map(indexmap::map::Values<'a, String, Value>),
+    Empty,
+}
+
+impl<'a> Iterator for ValueIter<'a> {
+    type Item = &'a Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            ValueIter::Slice(it) => it.next(),
+            ValueIter::Map(it) => it.next(),
+            ValueIter::Empty => None,
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            ValueIter::Slice(it) => it.size_hint(),
+            ValueIter::Map(it) => it.size_hint(),
+            ValueIter::Empty => (0, Some(0)),
+        }
+    }
+}
+
+impl<'a> ExactSizeIterator for ValueIter<'a> {}
+
+impl<'a> IntoIterator for &'a Value {
+    type Item = &'a Value;
+    type IntoIter = ValueIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        match self {
+            Value::List(l) => ValueIter::Slice(l.elements.iter()),
+            Value::Tuple(t) => ValueIter::Slice(t.elements.iter()),
+            Value::Struct(m) => ValueIter::Map(m.values()),
+            _ => ValueIter::Empty,
+        }
+    }
+}
+
+/// Owned iterator over `Value` elements.
+pub enum ValueIntoIter {
+    Vec(std::vec::IntoIter<Value>),
+    Map(indexmap::map::IntoValues<String, Value>),
+    Empty,
+}
+
+impl Iterator for ValueIntoIter {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            ValueIntoIter::Vec(it) => it.next(),
+            ValueIntoIter::Map(it) => it.next(),
+            ValueIntoIter::Empty => None,
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            ValueIntoIter::Vec(it) => it.size_hint(),
+            ValueIntoIter::Map(it) => it.size_hint(),
+            ValueIntoIter::Empty => (0, Some(0)),
+        }
+    }
+}
+
+impl ExactSizeIterator for ValueIntoIter {}
+
+impl IntoIterator for Value {
+    type Item = Value;
+    type IntoIter = ValueIntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        match self {
+            Value::List(l) => ValueIntoIter::Vec(l.elements.into_iter()),
+            Value::Tuple(t) => ValueIntoIter::Vec(t.elements.into_iter()),
+            Value::Struct(m) => ValueIntoIter::Map(m.into_values()),
+            _ => ValueIntoIter::Empty,
+        }
+    }
+}
+
+impl Value {
+    /// Returns the number of elements (list/tuple) or fields (struct).
+    /// Returns `None` for non-collection types.
+    pub fn len(&self) -> Option<usize> {
+        match self {
+            Value::List(l) => Some(l.elements.len()),
+            Value::Tuple(t) => Some(t.elements.len()),
+            Value::Struct(m) => Some(m.len()),
+            _ => None,
+        }
+    }
+
+    /// Iterate over (key, value) pairs for structs.
+    /// Returns `None` for non-struct types.
+    pub fn iter_fields(&self) -> Option<indexmap::map::Iter<'_, String, Value>> {
+        match self {
+            Value::Struct(m) => Some(m.iter()),
+            _ => None,
+        }
+    }
+}
+
+// ============================================================
 // Tests
 // ============================================================
 
@@ -562,5 +677,75 @@ mod tests {
         assert!(Value::from("a") < Value::from("b"));
         // incompatible types => None
         assert_eq!(Value::int(1).partial_cmp(&Value::Bool(true)), None);
+    }
+
+    // --- IntoIterator ---
+
+    #[test]
+    fn test_iter_list() {
+        let v = Value::list(vec![Value::int(1), Value::int(2), Value::int(3)]);
+        let items: Vec<&Value> = (&v).into_iter().collect();
+        assert_eq!(items, vec![&Value::int(1), &Value::int(2), &Value::int(3)]);
+    }
+
+    #[test]
+    fn test_iter_list_for_loop() {
+        let v = Value::list(vec![Value::int(10), Value::int(20)]);
+        let mut sum = 0i64;
+        for item in &v {
+            sum += item.as_i64().unwrap();
+        }
+        assert_eq!(sum, 30);
+    }
+
+    #[test]
+    fn test_iter_tuple() {
+        let v = Value::from((Value::int(1), Value::from("two")));
+        assert_eq!((&v).into_iter().count(), 2);
+    }
+
+    #[test]
+    fn test_iter_struct() {
+        let mut map = IndexMap::new();
+        map.insert("a".into(), Value::int(1));
+        map.insert("b".into(), Value::int(2));
+        let v = Value::Struct(map);
+        let vals: Vec<&Value> = (&v).into_iter().collect();
+        assert_eq!(vals, vec![&Value::int(1), &Value::int(2)]);
+    }
+
+    #[test]
+    fn test_iter_owned() {
+        let v = Value::list(vec![Value::int(1), Value::int(2)]);
+        let items: Vec<Value> = v.into_iter().collect();
+        assert_eq!(items, vec![Value::int(1), Value::int(2)]);
+    }
+
+    #[test]
+    fn test_iter_non_collection() {
+        let v = Value::int(42);
+        assert_eq!((&v).into_iter().count(), 0);
+        assert_eq!(v.into_iter().count(), 0);
+    }
+
+    #[test]
+    fn test_len() {
+        assert_eq!(Value::list(vec![Value::int(1), Value::int(2)]).len(), Some(2));
+        let mut map = IndexMap::new();
+        map.insert("x".into(), Value::int(1));
+        assert_eq!(Value::Struct(map).len(), Some(1));
+        assert_eq!(Value::int(42).len(), None);
+    }
+
+    #[test]
+    fn test_iter_fields() {
+        let mut map = IndexMap::new();
+        map.insert("name".into(), Value::from("Alice"));
+        map.insert("age".into(), Value::int(30));
+        let v = Value::Struct(map);
+        let fields: Vec<(&String, &Value)> = v.iter_fields().unwrap().collect();
+        assert_eq!(fields[0].0, "name");
+        assert_eq!(fields[1].0, "age");
+        assert!(Value::int(1).iter_fields().is_none());
     }
 }
