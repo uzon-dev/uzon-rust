@@ -586,6 +586,165 @@ impl ops::Neg for Value {
 }
 
 // ============================================================
+// Arithmetic with primitives
+// ============================================================
+
+macro_rules! impl_binop_int {
+    ($trait:ident, $method:ident, $($ty:ty),+) => {
+        $(
+            impl ops::$trait<$ty> for Value {
+                type Output = Value;
+                fn $method(self, rhs: $ty) -> Value {
+                    ops::$trait::$method(self, Value::from(rhs))
+                }
+            }
+            impl ops::$trait<Value> for $ty {
+                type Output = Value;
+                fn $method(self, rhs: Value) -> Value {
+                    ops::$trait::$method(Value::from(self), rhs)
+                }
+            }
+        )+
+    };
+}
+
+macro_rules! impl_binop_float {
+    ($trait:ident, $method:ident, $($ty:ty),+) => {
+        $(
+            impl ops::$trait<$ty> for Value {
+                type Output = Value;
+                fn $method(self, rhs: $ty) -> Value {
+                    ops::$trait::$method(self, Value::from(rhs))
+                }
+            }
+            impl ops::$trait<Value> for $ty {
+                type Output = Value;
+                fn $method(self, rhs: Value) -> Value {
+                    ops::$trait::$method(Value::from(self), rhs)
+                }
+            }
+        )+
+    };
+}
+
+macro_rules! impl_binop_str {
+    ($trait:ident, $method:ident) => {
+        impl ops::$trait<&str> for Value {
+            type Output = Value;
+            fn $method(self, rhs: &str) -> Value {
+                ops::$trait::$method(self, Value::from(rhs))
+            }
+        }
+        impl ops::$trait<Value> for &str {
+            type Output = Value;
+            fn $method(self, rhs: Value) -> Value {
+                ops::$trait::$method(Value::from(self), rhs)
+            }
+        }
+    };
+}
+
+impl_binop_int!(Add, add, i32, i64, i128, u32, u64);
+impl_binop_int!(Sub, sub, i32, i64, i128, u32, u64);
+impl_binop_int!(Mul, mul, i32, i64, i128, u32, u64);
+impl_binop_int!(Div, div, i32, i64, i128, u32, u64);
+impl_binop_int!(Rem, rem, i32, i64, i128, u32, u64);
+
+impl_binop_float!(Add, add, f32, f64);
+impl_binop_float!(Sub, sub, f32, f64);
+impl_binop_float!(Mul, mul, f32, f64);
+impl_binop_float!(Div, div, f32, f64);
+impl_binop_float!(Rem, rem, f32, f64);
+
+impl_binop_str!(Add, add);
+
+// ============================================================
+// PartialEq with primitives
+// ============================================================
+
+impl PartialEq<bool> for Value {
+    fn eq(&self, other: &bool) -> bool {
+        matches!(self, Value::Bool(b) if b == other)
+    }
+}
+
+impl PartialEq<i32> for Value {
+    fn eq(&self, other: &i32) -> bool {
+        matches!(self, Value::Integer(n) if n.value == *other as i128)
+    }
+}
+
+impl PartialEq<i64> for Value {
+    fn eq(&self, other: &i64) -> bool {
+        matches!(self, Value::Integer(n) if n.value == *other as i128)
+    }
+}
+
+impl PartialEq<i128> for Value {
+    fn eq(&self, other: &i128) -> bool {
+        matches!(self, Value::Integer(n) if n.value == *other)
+    }
+}
+
+impl PartialEq<u32> for Value {
+    fn eq(&self, other: &u32) -> bool {
+        matches!(self, Value::Integer(n) if n.value == *other as i128)
+    }
+}
+
+impl PartialEq<u64> for Value {
+    fn eq(&self, other: &u64) -> bool {
+        matches!(self, Value::Integer(n) if n.value == *other as i128)
+    }
+}
+
+impl PartialEq<f64> for Value {
+    fn eq(&self, other: &f64) -> bool {
+        matches!(self, Value::Float(f) if f.value == *other)
+    }
+}
+
+impl PartialEq<&str> for Value {
+    fn eq(&self, other: &&str) -> bool {
+        matches!(self, Value::String(s) if s == *other)
+    }
+}
+
+impl PartialEq<String> for Value {
+    fn eq(&self, other: &String) -> bool {
+        matches!(self, Value::String(s) if s == other)
+    }
+}
+
+// ============================================================
+// PartialOrd with primitives
+// ============================================================
+
+impl PartialOrd<i32> for Value {
+    fn partial_cmp(&self, other: &i32) -> Option<std::cmp::Ordering> {
+        self.partial_cmp(&Value::from(*other))
+    }
+}
+
+impl PartialOrd<i64> for Value {
+    fn partial_cmp(&self, other: &i64) -> Option<std::cmp::Ordering> {
+        self.partial_cmp(&Value::from(*other))
+    }
+}
+
+impl PartialOrd<f64> for Value {
+    fn partial_cmp(&self, other: &f64) -> Option<std::cmp::Ordering> {
+        self.partial_cmp(&Value::from(*other))
+    }
+}
+
+impl PartialOrd<&str> for Value {
+    fn partial_cmp(&self, other: &&str) -> Option<std::cmp::Ordering> {
+        self.partial_cmp(&Value::from(*other))
+    }
+}
+
+// ============================================================
 // Comparison: PartialOrd (numeric only)
 // ============================================================
 
@@ -1049,7 +1208,69 @@ mod tests {
         let _ = Value::int(1) + Value::Bool(true);
     }
 
-    // --- PartialOrd ---
+    // --- Primitive arithmetic ---
+
+    #[test]
+    fn test_add_primitive() {
+        assert_eq!(Value::int(10) + 5, Value::int(15));
+        assert_eq!(5 + Value::int(10), Value::int(15));
+        assert_eq!(Value::float(1.5) + 0.5, Value::float(2.0));
+        assert_eq!(0.5 + Value::float(1.5), Value::float(2.0));
+        assert_eq!(Value::int(10) + 0.5, Value::float(10.5));
+        assert_eq!(Value::from("he") + "llo", Value::from("hello"));
+        assert_eq!("he" + Value::from("llo"), Value::from("hello"));
+    }
+
+    #[test]
+    fn test_sub_primitive() {
+        assert_eq!(Value::int(10) - 3, Value::int(7));
+        assert_eq!(20 - Value::int(3), Value::int(17));
+    }
+
+    #[test]
+    fn test_mul_primitive() {
+        assert_eq!(Value::int(4) * 5, Value::int(20));
+        assert_eq!(5 * Value::int(4), Value::int(20));
+    }
+
+    #[test]
+    fn test_div_primitive() {
+        assert_eq!(Value::int(10) / 3, Value::int(3));
+        assert_eq!(Value::float(10.0) / 4.0, Value::float(2.5));
+    }
+
+    #[test]
+    fn test_rem_primitive() {
+        assert_eq!(Value::int(10) % 3, Value::int(1));
+    }
+
+    // --- Primitive PartialEq ---
+
+    #[test]
+    fn test_eq_primitive() {
+        assert!(Value::int(42) == 42);
+        assert!(Value::int(42) == 42i64);
+        assert!(Value::int(42) == 42i128);
+        assert!(Value::float(3.14) == 3.14);
+        assert!(Value::Bool(true) == true);
+        assert!(Value::from("hello") == "hello");
+        assert!(Value::from("hello") == String::from("hello"));
+
+        assert!(Value::int(42) != 43);
+        assert!(Value::from("hello") != "world");
+    }
+
+    // --- Primitive PartialOrd ---
+
+    #[test]
+    fn test_ord_primitive() {
+        assert!(Value::int(1) < 2);
+        assert!(Value::int(3) > 2i64);
+        assert!(Value::float(1.0) < 2.0);
+        assert!(Value::from("a") < "b");
+    }
+
+    // --- PartialOrd (Value vs Value) ---
 
     #[test]
     fn test_ordering() {
