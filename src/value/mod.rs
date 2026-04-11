@@ -3,7 +3,7 @@
 
 mod format;
 mod numeric;
-mod ops;
+pub mod ops;
 
 pub use format::format_float;
 pub use numeric::{FloatType, IntegerType, UzonFloat, UzonInteger};
