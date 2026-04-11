@@ -68,10 +68,10 @@ impl Serialize for Value {
             Value::Enum(e) => serializer.serialize_str(&e.value),
             Value::Union(u) => u.value.serialize(serializer),
             Value::TaggedUnion(tu) => {
-                let mut map = serializer.serialize_map(Some(2))?;
-                map.serialize_entry(&tu.tag, &*tu.value)?;
-                map.serialize_entry("_tag", &tu.tag)?;
-                map.end()
+                // Serialize the inner value directly. The tag is metadata,
+                // not data — adding a "_tag" field risks colliding with
+                // user-defined fields.
+                tu.value.serialize(serializer)
             }
             Value::Function(_) => serializer.serialize_none(),
         }
@@ -124,6 +124,11 @@ macro_rules! deserialize_number {
         fn $method<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
             match self.value {
                 Value::Integer(n) => visitor.$visit(n.value as $ty),
+                Value::BigInteger(n) => {
+                    use num_traits::ToPrimitive;
+                    let v = n.to_i128().ok_or_else(|| DeError(format!("BigInteger out of range for {}", stringify!($ty))))?;
+                    visitor.$visit(v as $ty)
+                }
                 Value::Float(f) => visitor.$visit(f.value as $ty),
                 _ => Err(DeError(format!("expected number, got {}", self.value.type_name()))),
             }
