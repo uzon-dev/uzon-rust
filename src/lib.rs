@@ -15,7 +15,7 @@ pub mod value;
 pub use error::{UzonError, Result};
 pub use evaluator::{from_str, from_str_plain, from_path, Evaluator, EvalOptions};
 pub use stringify::{to_string, to_string_with_options, StringifyOptions};
-pub use value::{Value, UzonInteger, UzonFloat, IntegerType, FloatType};
+pub use value::{Value, UzonInteger, UzonFloat, IntegerType, FloatType, UzonEnum, UzonUnion, UzonTaggedUnion, UzonTuple, UzonList, UzonFunction, UzonUndefined};
 pub use value::ops::{ValueConversionError, ValueArithmeticError};
 pub use value::serde_impl::{from_value, DeError};
 

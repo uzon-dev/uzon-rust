@@ -34,6 +34,10 @@ impl Value {
     pub fn as_i64(&self) -> Option<i64> {
         match self {
             Value::Integer(n) => i64::try_from(n.value).ok(),
+            Value::BigInteger(n) => {
+                use num_traits::ToPrimitive;
+                n.to_i64()
+            }
             _ => None,
         }
     }
@@ -41,6 +45,10 @@ impl Value {
     pub fn as_i128(&self) -> Option<i128> {
         match self {
             Value::Integer(n) => Some(n.value),
+            Value::BigInteger(n) => {
+                use num_traits::ToPrimitive;
+                n.to_i128()
+            }
             _ => None,
         }
     }
@@ -49,6 +57,10 @@ impl Value {
         match self {
             Value::Float(f) => Some(f.value),
             Value::Integer(n) => Some(n.value as f64),
+            Value::BigInteger(n) => {
+                use num_traits::ToPrimitive;
+                n.to_f64()
+            }
             _ => None,
         }
     }
@@ -203,7 +215,18 @@ impl Value {
     /// // base = { a: 2, nested: { x: 10, y: 99, z: 30 } }
     /// ```
     pub fn merge(&mut self, other: Value) {
-        match (self, other) {
+        // Unwrap union wrappers before merging.
+        let other = match other {
+            Value::Union(u) => *u.value,
+            Value::TaggedUnion(tu) => *tu.value,
+            v => v,
+        };
+        let self_inner = match self {
+            Value::Union(u) => &mut *u.value,
+            Value::TaggedUnion(tu) => &mut *tu.value,
+            v => v,
+        };
+        match (self_inner, other) {
             (Value::Struct(base), Value::Struct(overlay)) => {
                 for (key, oval) in overlay {
                     if let Some(bval) = base.get_mut(&key) {
@@ -392,6 +415,10 @@ impl TryFrom<Value> for i64 {
         match v {
             Value::Integer(n) => i64::try_from(n.value)
                 .map_err(|_| ValueConversionError { from: "integer (out of i64 range)", to: "i64" }),
+            Value::BigInteger(n) => {
+                use num_traits::ToPrimitive;
+                n.to_i64().ok_or(ValueConversionError { from: "integer (out of i64 range)", to: "i64" })
+            }
             _ => Err(ValueConversionError { from: v.type_name(), to: "i64" }),
         }
     }
@@ -402,6 +429,10 @@ impl TryFrom<Value> for i128 {
     fn try_from(v: Value) -> Result<Self, Self::Error> {
         match v {
             Value::Integer(n) => Ok(n.value),
+            Value::BigInteger(n) => {
+                use num_traits::ToPrimitive;
+                n.to_i128().ok_or(ValueConversionError { from: "integer (out of i128 range)", to: "i128" })
+            }
             _ => Err(ValueConversionError { from: v.type_name(), to: "i128" }),
         }
     }
@@ -413,6 +444,10 @@ impl TryFrom<Value> for u64 {
         match v {
             Value::Integer(n) => u64::try_from(n.value)
                 .map_err(|_| ValueConversionError { from: "integer (out of u64 range)", to: "u64" }),
+            Value::BigInteger(n) => {
+                use num_traits::ToPrimitive;
+                n.to_u64().ok_or(ValueConversionError { from: "integer (out of u64 range)", to: "u64" })
+            }
             _ => Err(ValueConversionError { from: v.type_name(), to: "u64" }),
         }
     }
@@ -424,6 +459,10 @@ impl TryFrom<Value> for f64 {
         match v {
             Value::Float(f) => Ok(f.value),
             Value::Integer(n) => Ok(n.value as f64),
+            Value::BigInteger(n) => {
+                use num_traits::ToPrimitive;
+                n.to_f64().ok_or(ValueConversionError { from: "integer (out of f64 range)", to: "f64" })
+            }
             _ => Err(ValueConversionError { from: v.type_name(), to: "f64" }),
         }
     }
@@ -478,6 +517,10 @@ impl<'a> TryFrom<&'a Value> for i64 {
         match v {
             Value::Integer(n) => i64::try_from(n.value)
                 .map_err(|_| ValueConversionError { from: "integer (out of i64 range)", to: "i64" }),
+            Value::BigInteger(n) => {
+                use num_traits::ToPrimitive;
+                n.to_i64().ok_or(ValueConversionError { from: "integer (out of i64 range)", to: "i64" })
+            }
             _ => Err(ValueConversionError { from: v.type_name(), to: "i64" }),
         }
     }
@@ -488,6 +531,10 @@ impl<'a> TryFrom<&'a Value> for i128 {
     fn try_from(v: &'a Value) -> Result<Self, Self::Error> {
         match v {
             Value::Integer(n) => Ok(n.value),
+            Value::BigInteger(n) => {
+                use num_traits::ToPrimitive;
+                n.to_i128().ok_or(ValueConversionError { from: "integer (out of i128 range)", to: "i128" })
+            }
             _ => Err(ValueConversionError { from: v.type_name(), to: "i128" }),
         }
     }
@@ -499,6 +546,10 @@ impl<'a> TryFrom<&'a Value> for f64 {
         match v {
             Value::Float(f) => Ok(f.value),
             Value::Integer(n) => Ok(n.value as f64),
+            Value::BigInteger(n) => {
+                use num_traits::ToPrimitive;
+                n.to_f64().ok_or(ValueConversionError { from: "integer (out of f64 range)", to: "f64" })
+            }
             _ => Err(ValueConversionError { from: v.type_name(), to: "f64" }),
         }
     }
