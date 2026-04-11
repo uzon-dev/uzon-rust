@@ -564,11 +564,11 @@ fn test_circular_dependency() {
     eval_err("a is b\nb is a");
 }
 
-// === Self-reference (§5.12) ===
+// === Bare name resolution (§5.12) ===
 
 #[test]
-fn test_self_member_access() {
-    let v = eval_val("s is { x is 10, y is self.x + 1 }", "s");
+fn test_bare_name_resolution() {
+    let v = eval_val("s is { x is 10, y is x + 1 }", "s");
     if let Value::Struct(fields) = v {
         assert_eq!(fields.get("y"), Some(&Value::int(11)));
     } else {

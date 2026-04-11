@@ -98,7 +98,7 @@ fn test_case_expr() {
 
 #[test]
 fn test_member_access() {
-    let doc = parse("x is self.config.port");
+    let doc = parse("x is config.port");
     if let NodeKind::MemberAccess { ref member, .. } = doc.bindings[0].value.kind {
         assert_eq!(member, "port");
     } else {
@@ -108,7 +108,7 @@ fn test_member_access() {
 
 #[test]
 fn test_string_interpolation() {
-    let doc = parse(r#"x is "hello {self.name}!""#);
+    let doc = parse(r#"x is "hello {name}!""#);
     if let NodeKind::StringLiteral { ref parts } = doc.bindings[0].value.kind {
         assert_eq!(parts.len(), 3);
     } else {
@@ -124,7 +124,7 @@ fn test_or_else() {
 
 #[test]
 fn test_struct_override() {
-    let doc = parse("x is self.base with { debug is true }");
+    let doc = parse("x is base with { debug is true }");
     assert!(matches!(
         doc.bindings[0].value.kind,
         NodeKind::StructOverride { .. }
@@ -190,7 +190,7 @@ fn test_conversion() {
 
 #[test]
 fn test_field_extraction() {
-    let doc = parse("port is of self.config");
+    let doc = parse("port is of config");
     assert!(matches!(
         doc.bindings[0].value.kind,
         NodeKind::FieldExtraction { .. }
@@ -392,7 +392,7 @@ fn test_function_call() {
 
 #[test]
 fn test_struct_extends() {
-    let doc = parse("x is self.base extends { extra is true }");
+    let doc = parse("x is base extends { extra is true }");
     assert!(matches!(
         doc.bindings[0].value.kind,
         NodeKind::StructExtension { .. }
@@ -513,7 +513,7 @@ fn test_function_required_after_default_rejected() {
 
 #[test]
 fn test_chained_with_rejected() {
-    let result = try_parse("x is self.a with { b is 1 } with { c is 2 }");
+    let result = try_parse("x is a with { b is 1 } with { c is 2 }");
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(err.contains("cannot chain"));

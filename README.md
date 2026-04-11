@@ -108,9 +108,9 @@ point is (10, 20)              // tuple
 server is { host is "localhost", port is 8080 }
 
 // Expressions
-total is self.a + self.b
-greeting is "Hello, {self.name}!"
-grade is if self.score >= 90 then "A" else "B"
+total is a + b
+greeting is "Hello, {name}!"
+grade is if score >= 90 then "A" else "B"
 
 // Enums
 _color is red from red, green, blue called Color
@@ -118,14 +118,14 @@ selected is green as Color
 
 // Functions
 add is function a as i32, b as i32 returns i32 { a + b }
-result is self.add(3, 4)
+result is add(3, 4)
 
 // Struct operations
-production is self.base extends { host is "prod.example.com" }
-modified is self.base with { port is 443 }
+production is base extends { host is "prod.example.com" }
+modified is base with { port is 443 }
 
 // Null handling
-fallback is self.config.missing or else "default"
+fallback is config.missing or else "default"
 ```
 
 ## API Reference

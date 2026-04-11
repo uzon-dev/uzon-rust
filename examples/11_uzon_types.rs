@@ -134,7 +134,7 @@ fn main() {
     let source = r#"
         present is null
         data is { x is 1 }
-        missing is self.data.y
+        missing is data.y
     "#;
 
     let bindings = from_str(source).expect("parse failed");
