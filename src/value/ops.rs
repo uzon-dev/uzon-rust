@@ -235,6 +235,163 @@ impl From<(Value, Value, Value)> for Value {
 }
 
 // ============================================================
+// TryFrom — Value into Rust types
+// ============================================================
+
+/// Error returned when a `Value` cannot be converted to the requested Rust type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValueConversionError {
+    pub from: &'static str,
+    pub to: &'static str,
+}
+
+impl std::fmt::Display for ValueConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "cannot convert {} to {}", self.from, self.to)
+    }
+}
+
+impl std::error::Error for ValueConversionError {}
+
+impl TryFrom<Value> for bool {
+    type Error = ValueConversionError;
+    fn try_from(v: Value) -> Result<Self, Self::Error> {
+        match v {
+            Value::Bool(b) => Ok(b),
+            _ => Err(ValueConversionError { from: v.type_name(), to: "bool" }),
+        }
+    }
+}
+
+impl TryFrom<Value> for i64 {
+    type Error = ValueConversionError;
+    fn try_from(v: Value) -> Result<Self, Self::Error> {
+        match v {
+            Value::Integer(n) => i64::try_from(n.value)
+                .map_err(|_| ValueConversionError { from: "integer (out of i64 range)", to: "i64" }),
+            _ => Err(ValueConversionError { from: v.type_name(), to: "i64" }),
+        }
+    }
+}
+
+impl TryFrom<Value> for i128 {
+    type Error = ValueConversionError;
+    fn try_from(v: Value) -> Result<Self, Self::Error> {
+        match v {
+            Value::Integer(n) => Ok(n.value),
+            _ => Err(ValueConversionError { from: v.type_name(), to: "i128" }),
+        }
+    }
+}
+
+impl TryFrom<Value> for u64 {
+    type Error = ValueConversionError;
+    fn try_from(v: Value) -> Result<Self, Self::Error> {
+        match v {
+            Value::Integer(n) => u64::try_from(n.value)
+                .map_err(|_| ValueConversionError { from: "integer (out of u64 range)", to: "u64" }),
+            _ => Err(ValueConversionError { from: v.type_name(), to: "u64" }),
+        }
+    }
+}
+
+impl TryFrom<Value> for f64 {
+    type Error = ValueConversionError;
+    fn try_from(v: Value) -> Result<Self, Self::Error> {
+        match v {
+            Value::Float(f) => Ok(f.value),
+            Value::Integer(n) => Ok(n.value as f64),
+            _ => Err(ValueConversionError { from: v.type_name(), to: "f64" }),
+        }
+    }
+}
+
+impl TryFrom<Value> for String {
+    type Error = ValueConversionError;
+    fn try_from(v: Value) -> Result<Self, Self::Error> {
+        match v {
+            Value::String(s) => Ok(s),
+            _ => Err(ValueConversionError { from: v.type_name(), to: "String" }),
+        }
+    }
+}
+
+impl TryFrom<Value> for Vec<Value> {
+    type Error = ValueConversionError;
+    fn try_from(v: Value) -> Result<Self, Self::Error> {
+        match v {
+            Value::List(l) => Ok(l.elements),
+            Value::Tuple(t) => Ok(t.elements),
+            _ => Err(ValueConversionError { from: v.type_name(), to: "Vec<Value>" }),
+        }
+    }
+}
+
+impl TryFrom<Value> for IndexMap<String, Value> {
+    type Error = ValueConversionError;
+    fn try_from(v: Value) -> Result<Self, Self::Error> {
+        match v {
+            Value::Struct(m) => Ok(m),
+            _ => Err(ValueConversionError { from: v.type_name(), to: "IndexMap<String, Value>" }),
+        }
+    }
+}
+
+// Also support TryFrom<&Value> for Copy types and &str
+
+impl<'a> TryFrom<&'a Value> for bool {
+    type Error = ValueConversionError;
+    fn try_from(v: &'a Value) -> Result<Self, Self::Error> {
+        match v {
+            Value::Bool(b) => Ok(*b),
+            _ => Err(ValueConversionError { from: v.type_name(), to: "bool" }),
+        }
+    }
+}
+
+impl<'a> TryFrom<&'a Value> for i64 {
+    type Error = ValueConversionError;
+    fn try_from(v: &'a Value) -> Result<Self, Self::Error> {
+        match v {
+            Value::Integer(n) => i64::try_from(n.value)
+                .map_err(|_| ValueConversionError { from: "integer (out of i64 range)", to: "i64" }),
+            _ => Err(ValueConversionError { from: v.type_name(), to: "i64" }),
+        }
+    }
+}
+
+impl<'a> TryFrom<&'a Value> for i128 {
+    type Error = ValueConversionError;
+    fn try_from(v: &'a Value) -> Result<Self, Self::Error> {
+        match v {
+            Value::Integer(n) => Ok(n.value),
+            _ => Err(ValueConversionError { from: v.type_name(), to: "i128" }),
+        }
+    }
+}
+
+impl<'a> TryFrom<&'a Value> for f64 {
+    type Error = ValueConversionError;
+    fn try_from(v: &'a Value) -> Result<Self, Self::Error> {
+        match v {
+            Value::Float(f) => Ok(f.value),
+            Value::Integer(n) => Ok(n.value as f64),
+            _ => Err(ValueConversionError { from: v.type_name(), to: "f64" }),
+        }
+    }
+}
+
+impl<'a> TryFrom<&'a Value> for &'a str {
+    type Error = ValueConversionError;
+    fn try_from(v: &'a Value) -> Result<Self, Self::Error> {
+        match v {
+            Value::String(s) => Ok(s.as_str()),
+            _ => Err(ValueConversionError { from: v.type_name(), to: "&str" }),
+        }
+    }
+}
+
+// ============================================================
 // Arithmetic operators
 // ============================================================
 
@@ -587,6 +744,85 @@ mod tests {
     fn test_index_non_collection() {
         assert_eq!(Value::int(5)["key"], Value::Null);
         assert_eq!(Value::int(5)[0], Value::Null);
+    }
+
+    // --- TryFrom ---
+
+    #[test]
+    fn test_try_into_bool() {
+        let v = Value::Bool(true);
+        let b: bool = v.try_into().unwrap();
+        assert_eq!(b, true);
+        assert!(bool::try_from(Value::int(1)).is_err());
+    }
+
+    #[test]
+    fn test_try_into_i64() {
+        let n: i64 = Value::int(42).try_into().unwrap();
+        assert_eq!(n, 42);
+        assert!(i64::try_from(Value::float(1.5)).is_err());
+    }
+
+    #[test]
+    fn test_try_into_i128() {
+        let n: i128 = Value::int(i128::MAX).try_into().unwrap();
+        assert_eq!(n, i128::MAX);
+    }
+
+    #[test]
+    fn test_try_into_u64() {
+        let n: u64 = Value::int(100).try_into().unwrap();
+        assert_eq!(n, 100);
+        assert!(u64::try_from(Value::int(-1)).is_err());
+    }
+
+    #[test]
+    fn test_try_into_f64() {
+        let f: f64 = Value::float(3.14).try_into().unwrap();
+        assert_eq!(f, 3.14);
+        // integer auto-converts
+        let f: f64 = Value::int(10).try_into().unwrap();
+        assert_eq!(f, 10.0);
+    }
+
+    #[test]
+    fn test_try_into_string() {
+        let s: String = Value::from("hello").try_into().unwrap();
+        assert_eq!(s, "hello");
+        assert!(String::try_from(Value::int(1)).is_err());
+    }
+
+    #[test]
+    fn test_try_into_vec() {
+        let v: Vec<Value> = Value::list(vec![Value::int(1), Value::int(2)]).try_into().unwrap();
+        assert_eq!(v.len(), 2);
+    }
+
+    #[test]
+    fn test_try_into_map() {
+        let mut map = IndexMap::new();
+        map.insert("x".into(), Value::int(1));
+        let m: IndexMap<String, Value> = Value::Struct(map).try_into().unwrap();
+        assert_eq!(m.len(), 1);
+    }
+
+    #[test]
+    fn test_try_from_ref() {
+        let v = Value::int(42);
+        let n: i64 = (&v).try_into().unwrap();
+        assert_eq!(n, 42);
+        // v is still usable
+        assert_eq!(v, Value::int(42));
+
+        let v = Value::from("hello");
+        let s: &str = (&v).try_into().unwrap();
+        assert_eq!(s, "hello");
+    }
+
+    #[test]
+    fn test_conversion_error_display() {
+        let err = bool::try_from(Value::int(1)).unwrap_err();
+        assert_eq!(err.to_string(), "cannot convert integer to bool");
     }
 
     // --- From ---
