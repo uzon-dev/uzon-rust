@@ -8,7 +8,7 @@
 
 use indexmap::IndexMap;
 use serde::ser::{SerializeMap, SerializeSeq};
-use serde::{self, Serialize};
+use serde::{self, Deserialize, Serialize};
 
 use super::Value;
 
@@ -459,6 +459,85 @@ pub fn from_value<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, DeE
 }
 
 // ============================================================
+// Deserialize INTO Value (e.g. from JSON)
+// ============================================================
+
+/// Visitor that builds a [`Value`] from any serde data source.
+struct ValueVisitor;
+
+impl<'de> Visitor<'de> for ValueVisitor {
+    type Value = Value;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("any valid value")
+    }
+
+    fn visit_bool<E: de::Error>(self, v: bool) -> Result<Value, E> {
+        Ok(Value::Bool(v))
+    }
+
+    fn visit_i8<E: de::Error>(self, v: i8) -> Result<Value, E> { Ok(Value::int(v as i128)) }
+    fn visit_i16<E: de::Error>(self, v: i16) -> Result<Value, E> { Ok(Value::int(v as i128)) }
+    fn visit_i32<E: de::Error>(self, v: i32) -> Result<Value, E> { Ok(Value::int(v as i128)) }
+    fn visit_i64<E: de::Error>(self, v: i64) -> Result<Value, E> { Ok(Value::int(v as i128)) }
+    fn visit_i128<E: de::Error>(self, v: i128) -> Result<Value, E> { Ok(Value::int(v)) }
+
+    fn visit_u8<E: de::Error>(self, v: u8) -> Result<Value, E> { Ok(Value::int(v as i128)) }
+    fn visit_u16<E: de::Error>(self, v: u16) -> Result<Value, E> { Ok(Value::int(v as i128)) }
+    fn visit_u32<E: de::Error>(self, v: u32) -> Result<Value, E> { Ok(Value::int(v as i128)) }
+    fn visit_u64<E: de::Error>(self, v: u64) -> Result<Value, E> { Ok(Value::int(v as i128)) }
+
+    fn visit_f32<E: de::Error>(self, v: f32) -> Result<Value, E> { Ok(Value::float(v as f64)) }
+    fn visit_f64<E: de::Error>(self, v: f64) -> Result<Value, E> { Ok(Value::float(v)) }
+
+    fn visit_char<E: de::Error>(self, v: char) -> Result<Value, E> {
+        Ok(Value::String(v.to_string()))
+    }
+
+    fn visit_str<E: de::Error>(self, v: &str) -> Result<Value, E> {
+        Ok(Value::String(v.to_string()))
+    }
+
+    fn visit_string<E: de::Error>(self, v: String) -> Result<Value, E> {
+        Ok(Value::String(v))
+    }
+
+    fn visit_none<E: de::Error>(self) -> Result<Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_unit<E: de::Error>(self) -> Result<Value, E> {
+        Ok(Value::Null)
+    }
+
+    fn visit_some<D: serde::Deserializer<'de>>(self, deserializer: D) -> Result<Value, D::Error> {
+        Value::deserialize(deserializer)
+    }
+
+    fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
+        let mut elements = Vec::new();
+        while let Some(elem) = seq.next_element()? {
+            elements.push(elem);
+        }
+        Ok(Value::list(elements))
+    }
+
+    fn visit_map<A: de::MapAccess<'de>>(self, mut map: A) -> Result<Value, A::Error> {
+        let mut fields = IndexMap::new();
+        while let Some((key, value)) = map.next_entry()? {
+            fields.insert(key, value);
+        }
+        Ok(Value::Struct(fields))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Value {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(ValueVisitor)
+    }
+}
+
+// ============================================================
 // Tests
 // ============================================================
 
@@ -600,5 +679,59 @@ mod tests {
         let result: Result<String, _> = from_value(v);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("expected string"));
+    }
+
+    // --- Deserialize INTO Value (from JSON) ---
+
+    #[test]
+    fn test_json_to_value_primitives() {
+        let v: Value = serde_json::from_str("null").unwrap();
+        assert_eq!(v, Value::Null);
+
+        let v: Value = serde_json::from_str("true").unwrap();
+        assert_eq!(v, Value::Bool(true));
+
+        let v: Value = serde_json::from_str("42").unwrap();
+        assert_eq!(v, Value::int(42));
+
+        let v: Value = serde_json::from_str("3.14").unwrap();
+        assert!(matches!(v, Value::Float(_)));
+
+        let v: Value = serde_json::from_str(r#""hello""#).unwrap();
+        assert_eq!(v, Value::String("hello".into()));
+    }
+
+    #[test]
+    fn test_json_to_value_array() {
+        let v: Value = serde_json::from_str("[1, 2, 3]").unwrap();
+        assert_eq!(v.len(), Some(3));
+        assert_eq!(v.get_index(0), Some(&Value::int(1)));
+    }
+
+    #[test]
+    fn test_json_to_value_object() {
+        let v: Value = serde_json::from_str(r#"{"name": "Alice", "age": 30}"#).unwrap();
+        assert_eq!(v.get("name"), Some(&Value::String("Alice".into())));
+        assert_eq!(v.get("age"), Some(&Value::int(30)));
+    }
+
+    #[test]
+    fn test_json_to_value_nested() {
+        let json = r#"{
+            "server": {"host": "localhost", "port": 8080},
+            "tags": ["web", "api"]
+        }"#;
+        let v: Value = serde_json::from_str(json).unwrap();
+        assert_eq!(v.get_path("server.host"), Some(&Value::String("localhost".into())));
+        assert_eq!(v.get_path("server.port"), Some(&Value::int(8080)));
+        assert_eq!(v.get("tags").unwrap().get_index(1), Some(&Value::String("api".into())));
+    }
+
+    #[test]
+    fn test_json_roundtrip() {
+        let original = r#"{"a":1,"b":[true,null,"hello"],"c":{"x":3.14}}"#;
+        let v: Value = serde_json::from_str(original).unwrap();
+        let back = serde_json::to_string(&v).unwrap();
+        assert_eq!(back, original);
     }
 }
