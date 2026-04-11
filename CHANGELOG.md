@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-04-12
+
+### Changed
+
+- Spec v0.6 compliance: error classifications, conversion handling, `std.len` Unicode scalar count
+- README examples updated to follow style guide (Appendix E)
+
+### Fixed
+
+- `null.foo` classified as type error per §5.12
+- `undefined` in `and`/`or`/`not`/`is named` classified as runtime error per §3.1
+- `null to <non-string>` classified as type error per §5.11.0
+- `<non-null> to null` rejected as type error per §5.11.0
+- `"0xff" to f64` now parses hex/oct/bin prefixes via integer widening per §5.11.1
+- `std.split` rule precedence: empty input → empty delimiter → normal split per §5.16.4
+- `std.split("")` uses Unicode scalar splitting instead of Rust `str::split("")`
+- `std.len` returns Unicode scalar count for strings per §5.16
+
 ## [0.5.0] - 2026-04-11
 
 ### Added

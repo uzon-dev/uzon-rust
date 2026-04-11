@@ -21,7 +21,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-uzon = "0.5"
+uzon = "0.6"
 ```
 
 ## Table of Contents
@@ -55,7 +55,7 @@ use uzon::{from_str, from_str_plain, to_string, uzon, Value};
 // Parse UZON text
 let bindings = from_str(r#"
     name is "Alice"
-    scores is [95, 88, 92]
+    scores are 95, 88, 92
     config is { debug is true, port is 8080 }
 "#).unwrap();
 
@@ -88,7 +88,7 @@ let config: Config = uzon::from_str_as(r#"
 
 ## UZON Syntax Overview
 
-UZON is a declarative data expression format. Bindings use `is` instead of `=`, types use `as`, and values are computed lazily.
+UZON is a declarative data expression format. Bindings use `is` instead of `=`, types use `as`, and evaluation order is determined by the dependency graph — forward references are allowed.
 
 ```
 // Primitives
@@ -103,29 +103,51 @@ byte is 255 as u8
 precise is 3.14 as f32
 
 // Collections
-tags is ["web", "api"]
-point is (10, 20)              // tuple
+tags are "web", "api"                            // are = list sugar
+ids are 1, 2, 3 as [i32]
+point is (10, 20)                                // tuple
 server is { host is "localhost", port is 8080 }
 
-// Expressions
-total is a + b
+// Expressions and string interpolation
+total is age + 1
 greeting is "Hello, {name}!"
-grade is if score >= 90 then "A" else "B"
+grade is if score >= 90.0 then "A" else "B"
+
+// Case expression
+label is case grade
+    when "A" then "excellent"
+    when "B" then "good"
+    else "ok"
 
 // Enums
 _color is red from red, green, blue called Color
 selected is green as Color
 
+// Tagged unions
+result is "ok" named success
+    from success as string, failure as string
+    called Result
+
 // Functions
 add is function a as i32, b as i32 returns i32 { a + b }
-result is add(3, 4)
+sum is add(3, 4)
+
+// Standard library
+doubled is std.map(ids, function n as i32 returns i32 { n * 2 })
+count is std.len(tags)
 
 // Struct operations
-production is base extends { host is "prod.example.com" }
-modified is base with { port is 443 }
+modified is server with { port is 443 }
+extended is server extends { tls is true, cert is "/path" }
 
-// Null handling
-fallback is config.missing or else "default"
+// Environment variables
+port is env.PORT to u16 or else 8080
+
+// Undefined coalescing
+fallback is server.missing or else "default"
+
+// Field extraction
+host is of server                                // = server.host
 ```
 
 ## API Reference
@@ -182,11 +204,11 @@ let mut evaluator = Evaluator::new(options);
 // evaluator.evaluate(&document) — requires a parsed Document (internal API)
 ```
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `filename` | `Option<PathBuf>` | `None` | Source filename for error reporting |
-| `env` | `Option<HashMap<String, String>>` | `None` | Environment variables (defaults to `std::env::vars()`) |
-| `plain` | `bool` | `false` | If `true`, auto-calls `to_plain()` on results |
+| Field      | Type                              | Default | Description                                            |
+|------------|-----------------------------------|---------|--------------------------------------------------------|
+| `filename` | `Option<PathBuf>`                 | `None`  | Source filename for error reporting                    |
+| `env`      | `Option<HashMap<String, String>>` | `None`  | Environment variables (defaults to `std::env::vars()`) |
+| `plain`    | `bool`                            | `false` | If `true`, auto-calls `to_plain()` on results          |
 
 ---
 
@@ -223,18 +245,18 @@ pub struct UzonInteger {
 }
 ```
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `new` | `fn new(value: i128) -> Self` | Create with default type (i64) |
-| `with_type` | `fn with_type(value: i128, type_ann: IntegerType) -> Self` | Create with explicit type |
-| `validate_range` | `fn validate_range(&self) -> Result<(), String>` | Check value fits in annotated range |
-| `checked_add` | `fn checked_add(&self, other: &Self) -> Result<Self, String>` | Add with overflow check |
-| `checked_sub` | `fn checked_sub(&self, other: &Self) -> Result<Self, String>` | Subtract with overflow check |
-| `checked_mul` | `fn checked_mul(&self, other: &Self) -> Result<Self, String>` | Multiply with overflow check |
-| `checked_div` | `fn checked_div(&self, other: &Self) -> Result<Self, String>` | Divide (errors on zero) |
-| `checked_rem` | `fn checked_rem(&self, other: &Self) -> Result<Self, String>` | Remainder (errors on zero) |
-| `checked_pow` | `fn checked_pow(&self, exp: &Self) -> Result<Self, String>` | Power with overflow check |
-| `checked_neg` | `fn checked_neg(&self) -> Result<Self, String>` | Negate with overflow check |
+| Method           | Signature                                                     | Description                         |
+|------------------|---------------------------------------------------------------|-------------------------------------|
+| `new`            | `fn new(value: i128) -> Self`                                 | Create with default type (i64)      |
+| `with_type`      | `fn with_type(value: i128, type_ann: IntegerType) -> Self`    | Create with explicit type           |
+| `validate_range` | `fn validate_range(&self) -> Result<(), String>`              | Check value fits in annotated range |
+| `checked_add`    | `fn checked_add(&self, other: &Self) -> Result<Self, String>` | Add with overflow check             |
+| `checked_sub`    | `fn checked_sub(&self, other: &Self) -> Result<Self, String>` | Subtract with overflow check        |
+| `checked_mul`    | `fn checked_mul(&self, other: &Self) -> Result<Self, String>` | Multiply with overflow check        |
+| `checked_div`    | `fn checked_div(&self, other: &Self) -> Result<Self, String>` | Divide (errors on zero)             |
+| `checked_rem`    | `fn checked_rem(&self, other: &Self) -> Result<Self, String>` | Remainder (errors on zero)          |
+| `checked_pow`    | `fn checked_pow(&self, exp: &Self) -> Result<Self, String>`   | Power with overflow check           |
+| `checked_neg`    | `fn checked_neg(&self) -> Result<Self, String>`               | Negate with overflow check          |
 
 #### IntegerType
 
@@ -246,13 +268,13 @@ pub enum IntegerType {
 }
 ```
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `DEFAULT` | `const IntegerType::I(64)` | Default type for integer literals |
-| `is_default` | `fn is_default(&self) -> bool` | Check if this is the default type |
-| `range` | `fn range(&self) -> Option<(i128, i128)>` | `(min, max)` inclusive; `None` for Arbitrary |
-| `from_type_name` | `fn from_type_name(name: &str) -> Option<IntegerType>` | Parse `"i32"`, `"u64"`, etc. |
-| `display_name` | `fn display_name(&self) -> String` | `"i32"`, `"u64"`, `"integer"`, etc. |
+| Method           | Signature                                              | Description                                  |
+|------------------|--------------------------------------------------------|----------------------------------------------|
+| `DEFAULT`        | `const IntegerType::I(64)`                             | Default type for integer literals            |
+| `is_default`     | `fn is_default(&self) -> bool`                         | Check if this is the default type            |
+| `range`          | `fn range(&self) -> Option<(i128, i128)>`              | `(min, max)` inclusive; `None` for Arbitrary |
+| `from_type_name` | `fn from_type_name(name: &str) -> Option<IntegerType>` | Parse `"i32"`, `"u64"`, etc.                 |
+| `display_name`   | `fn display_name(&self) -> String`                     | `"i32"`, `"u64"`, `"integer"`, etc.          |
 
 #### UzonFloat
 
@@ -264,13 +286,13 @@ pub struct UzonFloat {
 }
 ```
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `new` | `fn new(value: f64) -> Self` | Create with default type (f64) |
-| `with_type` | `fn with_type(value: f64, type_ann: FloatType) -> Self` | Create with explicit type |
-| `add`, `sub`, `mul`, `div`, `rem` | `fn op(&self, other: &Self) -> Result<Self, String>` | Arithmetic operations |
-| `powf` | `fn powf(&self, other: &Self) -> Result<Self, String>` | Power |
-| `neg` | `fn neg(&self) -> Self` | Negate |
+| Method                            | Signature                                               | Description                    |
+|-----------------------------------|---------------------------------------------------------|--------------------------------|
+| `new`                             | `fn new(value: f64) -> Self`                            | Create with default type (f64) |
+| `with_type`                       | `fn with_type(value: f64, type_ann: FloatType) -> Self` | Create with explicit type      |
+| `add`, `sub`, `mul`, `div`, `rem` | `fn op(&self, other: &Self) -> Result<Self, String>`    | Arithmetic operations          |
+| `powf`                            | `fn powf(&self, other: &Self) -> Result<Self, String>`  | Power                          |
+| `neg`                             | `fn neg(&self) -> Self`                                 | Negate                         |
 
 #### FloatType
 
@@ -278,12 +300,12 @@ pub struct UzonFloat {
 pub enum FloatType { F16, F32, F64, F80, F128 }
 ```
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `DEFAULT` | `const FloatType::F64` | Default type for float literals |
-| `is_default` | `fn is_default(&self) -> bool` | Check if this is the default type |
-| `from_type_name` | `fn from_type_name(name: &str) -> Option<FloatType>` | Parse `"f32"`, `"f64"`, etc. |
-| `display_name` | `fn display_name(&self) -> &'static str` | `"f32"`, `"f64"`, etc. |
+| Method           | Signature                                            | Description                       |
+|------------------|------------------------------------------------------|-----------------------------------|
+| `DEFAULT`        | `const FloatType::F64`                               | Default type for float literals   |
+| `is_default`     | `fn is_default(&self) -> bool`                       | Check if this is the default type |
+| `from_type_name` | `fn from_type_name(name: &str) -> Option<FloatType>` | Parse `"f32"`, `"f64"`, etc.      |
+| `display_name`   | `fn display_name(&self) -> &'static str`             | `"f32"`, `"f64"`, etc.            |
 
 #### UzonList
 
@@ -294,12 +316,12 @@ pub struct UzonList {
 }
 ```
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `new` | `fn new(elements: Vec<Value>) -> Self` | Create without type annotation |
-| `with_type` | `fn with_type(elements: Vec<Value>, element_type: impl Into<String>) -> Self` | Create with element type |
-| `len` | `fn len(&self) -> usize` | Element count |
-| `is_empty` | `fn is_empty(&self) -> bool` | Check if empty |
+| Method      | Signature                                                                     | Description                    |
+|-------------|-------------------------------------------------------------------------------|--------------------------------|
+| `new`       | `fn new(elements: Vec<Value>) -> Self`                                        | Create without type annotation |
+| `with_type` | `fn with_type(elements: Vec<Value>, element_type: impl Into<String>) -> Self` | Create with element type       |
+| `len`       | `fn len(&self) -> usize`                                                      | Element count                  |
+| `is_empty`  | `fn is_empty(&self) -> bool`                                                  | Check if empty                 |
 
 `UzonList` also implements `Deref<Target=Vec<Value>>`, `DerefMut`, `IntoIterator`, and `FromIterator<Value>`.
 
@@ -311,11 +333,11 @@ pub struct UzonTuple {
 }
 ```
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `new` | `fn new(elements: Vec<Value>) -> Self` | Create tuple |
-| `len` | `fn len(&self) -> usize` | Element count |
-| `is_empty` | `fn is_empty(&self) -> bool` | Check if empty |
+| Method     | Signature                              | Description    |
+|------------|----------------------------------------|----------------|
+| `new`      | `fn new(elements: Vec<Value>) -> Self` | Create tuple   |
+| `len`      | `fn len(&self) -> usize`               | Element count  |
+| `is_empty` | `fn is_empty(&self) -> bool`           | Check if empty |
 
 #### UzonEnum
 
@@ -327,9 +349,9 @@ pub struct UzonEnum {
 }
 ```
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `new` | `fn new(value: impl Into<String>, variants: Vec<String>, type_name: Option<String>) -> Self` | Create enum |
+| Method | Signature                                                                                    | Description |
+|--------|----------------------------------------------------------------------------------------------|-------------|
+| `new`  | `fn new(value: impl Into<String>, variants: Vec<String>, type_name: Option<String>) -> Self` | Create enum |
 
 #### UzonUnion
 
@@ -341,9 +363,9 @@ pub struct UzonUnion {
 }
 ```
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `new` | `fn new(value: Value, types: Vec<String>, type_name: Option<String>) -> Self` | Create union |
+| Method | Signature                                                                     | Description  |
+|--------|-------------------------------------------------------------------------------|--------------|
+| `new`  | `fn new(value: Value, types: Vec<String>, type_name: Option<String>) -> Self` | Create union |
 
 #### UzonTaggedUnion
 
@@ -356,9 +378,9 @@ pub struct UzonTaggedUnion {
 }
 ```
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `new` | `fn new(value: Value, tag: impl Into<String>, variants: BTreeMap<String, Option<String>>, type_name: Option<String>) -> Self` | Create tagged union |
+| Method | Signature                                                                                                                     | Description         |
+|--------|-------------------------------------------------------------------------------------------------------------------------------|---------------------|
+| `new`  | `fn new(value: Value, tag: impl Into<String>, variants: BTreeMap<String, Option<String>>, type_name: Option<String>) -> Self` | Create tagged union |
 
 #### UzonFunction
 
@@ -633,16 +655,16 @@ let user = Value::struct_builder()
 
 #### From / Into conversions
 
-| Rust type | Value variant |
-|-----------|---------------|
-| `bool` | `Bool` |
-| `i32`, `i64`, `i128`, `u32`, `u64` | `Integer` |
-| `f32`, `f64` | `Float` |
-| `&str`, `String` | `String` |
-| `Vec<Value>` | `List` |
-| `IndexMap<String, Value>` | `Struct` |
-| `(Value, Value)` | `Tuple` (2 elements) |
-| `(Value, Value, Value)` | `Tuple` (3 elements) |
+| Rust type                          | Value variant        |
+|------------------------------------|----------------------|
+| `bool`                             | `Bool`               |
+| `i32`, `i64`, `i128`, `u32`, `u64` | `Integer`            |
+| `f32`, `f64`                       | `Float`              |
+| `&str`, `String`                   | `String`             |
+| `Vec<Value>`                       | `List`               |
+| `IndexMap<String, Value>`          | `Struct`             |
+| `(Value, Value)`                   | `Tuple` (2 elements) |
+| `(Value, Value, Value)`            | `Tuple` (3 elements) |
 
 ```rust
 let v: Value = 42.into();
@@ -658,16 +680,16 @@ let v: Value = vec![Value::int(1), Value::int(2)].into();
 
 Fallible conversions that consume the value:
 
-| Target | Source variant(s) | Notes |
-|--------|-------------------|-------|
-| `bool` | `Bool` | |
-| `i64` | `Integer`, `BigInteger` | Errors if out of range |
-| `i128` | `Integer`, `BigInteger` | Errors if BigInteger out of range |
-| `u64` | `Integer`, `BigInteger` | Errors if negative or out of range |
-| `f64` | `Float`, `Integer`, `BigInteger` | Integer auto-converts |
-| `String` | `String` | |
-| `Vec<Value>` | `List`, `Tuple` | |
-| `IndexMap<String, Value>` | `Struct` | |
+| Target                    | Source variant(s)                | Notes                              |
+|---------------------------|----------------------------------|------------------------------------|
+| `bool`                    | `Bool`                           |                                    |
+| `i64`                     | `Integer`, `BigInteger`          | Errors if out of range             |
+| `i128`                    | `Integer`, `BigInteger`          | Errors if BigInteger out of range  |
+| `u64`                     | `Integer`, `BigInteger`          | Errors if negative or out of range |
+| `f64`                     | `Float`, `Integer`, `BigInteger` | Integer auto-converts              |
+| `String`                  | `String`                         |                                    |
+| `Vec<Value>`              | `List`, `Tuple`                  |                                    |
+| `IndexMap<String, Value>` | `Struct`                         |                                    |
 
 ```rust
 let n: i64 = Value::int(42).try_into().unwrap();
@@ -679,13 +701,13 @@ let s: String = Value::from("hi").try_into().unwrap();
 
 Convert `&Value` without consuming:
 
-| Target | Source variant(s) |
-|--------|-------------------|
-| `bool` | `Bool` |
-| `i64` | `Integer`, `BigInteger` |
-| `i128` | `Integer`, `BigInteger` |
-| `f64` | `Float`, `Integer`, `BigInteger` |
-| `&str` | `String` |
+| Target | Source variant(s)                |
+|--------|----------------------------------|
+| `bool` | `Bool`                           |
+| `i64`  | `Integer`, `BigInteger`          |
+| `i128` | `Integer`, `BigInteger`          |
+| `f64`  | `Float`, `Integer`, `BigInteger` |
+| `&str` | `String`                         |
 
 ```rust
 let value = Value::int(42);
@@ -712,14 +734,14 @@ pub struct ValueConversionError {
 
 Standard Rust operators between `Value` instances:
 
-| Operator | Types | Notes |
-|----------|-------|-------|
-| `+` | Integer, Float, String | String concatenation via `+` |
-| `-` | Integer, Float | |
-| `*` | Integer, Float | |
-| `/` | Integer, Float | Integer division truncates |
-| `%` | Integer, Float | |
-| `-` (unary) | Integer, Float | |
+| Operator    | Types                  | Notes                        |
+|-------------|------------------------|------------------------------|
+| `+`         | Integer, Float, String | String concatenation via `+` |
+| `-`         | Integer, Float         |                              |
+| `*`         | Integer, Float         |                              |
+| `/`         | Integer, Float         | Integer division truncates   |
+| `%`         | Integer, Float         |                              |
+| `-` (unary) | Integer, Float         |                              |
 
 Mixed `Integer + Float` promotes to `Float`.
 
@@ -833,12 +855,12 @@ for item in &value {
 }
 ```
 
-| Value type | Yields |
-|------------|--------|
-| `List` | each element |
-| `Tuple` | each element |
-| `Struct` | each value (insertion order) |
-| Others | empty iterator |
+| Value type | Yields                       |
+|------------|------------------------------|
+| `List`     | each element                 |
+| `Tuple`    | each element                 |
+| `Struct`   | each value (insertion order) |
+| Others     | empty iterator               |
 
 #### Owned iteration (`Value`)
 
@@ -929,19 +951,19 @@ let json = serde_json::to_string(&value).unwrap();
 
 Serialization rules:
 
-| UZON type | Serialized as |
-|-----------|---------------|
-| `Null`, `Undefined` | `null` |
-| `Bool` | JSON boolean |
-| `Integer` | JSON number (i64 or i128) |
-| `BigInteger` | i128 if fits, otherwise string |
-| `Float` | JSON number (f64) |
-| `String` | JSON string |
-| `List`, `Tuple` | JSON array |
-| `Struct` | JSON object |
-| `Enum` | JSON string (variant name) |
-| `Union`, `TaggedUnion` | inner value |
-| `Function` | `null` |
+| UZON type              | Serialized as                  |
+|------------------------|--------------------------------|
+| `Null`, `Undefined`    | `null`                         |
+| `Bool`                 | JSON boolean                   |
+| `Integer`              | JSON number (i64 or i128)      |
+| `BigInteger`           | i128 if fits, otherwise string |
+| `Float`                | JSON number (f64)              |
+| `String`               | JSON string                    |
+| `List`, `Tuple`        | JSON array                     |
+| `Struct`               | JSON object                    |
+| `Enum`                 | JSON string (variant name)     |
+| `Union`, `TaggedUnion` | inner value                    |
+| `Function`             | `null`                         |
 
 #### JSON → Value (Deserialize)
 
@@ -981,10 +1003,10 @@ let text = to_string_with_options(&bindings, &opts);
 
 #### StringifyOptions
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `indent` | `usize` | `4` | Spaces per indentation level |
-| `inline_threshold` | `usize` | `4` | Max struct fields for single-line format |
+| Field              | Type    | Default | Description                              |
+|--------------------|---------|---------|------------------------------------------|
+| `indent`           | `usize` | `4`     | Spaces per indentation level             |
+| `inline_threshold` | `usize` | `4`     | Max struct fields for single-line format |
 
 #### Roundtrip
 
