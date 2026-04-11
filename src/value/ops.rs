@@ -515,141 +515,112 @@ impl<'a> TryFrom<&'a Value> for &'a str {
 }
 
 // ============================================================
-// Arithmetic operators
+// Arithmetic error
+// ============================================================
+
+/// Error returned by checked arithmetic on [`Value`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValueArithmeticError(pub String);
+
+impl std::fmt::Display for ValueArithmeticError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ValueArithmeticError {}
+
+// ============================================================
+// Checked arithmetic methods
+// ============================================================
+
+macro_rules! checked_binop {
+    ($name:ident, $int_method:ident, $float_method:ident, $op_name:expr) => {
+        pub fn $name(&self, rhs: &Value) -> Result<Value, ValueArithmeticError> {
+            match (self, rhs) {
+                (Value::Integer(a), Value::Integer(b)) => {
+                    a.$int_method(b).map(Value::Integer).map_err(ValueArithmeticError)
+                }
+                (Value::Float(a), Value::Float(b)) => {
+                    a.$float_method(b).map(Value::Float).map_err(ValueArithmeticError)
+                }
+                (Value::Integer(a), Value::Float(b)) => {
+                    UzonFloat::new(a.value as f64).$float_method(b).map(Value::Float).map_err(ValueArithmeticError)
+                }
+                (Value::Float(a), Value::Integer(b)) => {
+                    a.$float_method(&UzonFloat::new(b.value as f64)).map(Value::Float).map_err(ValueArithmeticError)
+                }
+                _ => Err(ValueArithmeticError(format!(
+                    "cannot {} {} and {}", $op_name, self.type_name(), rhs.type_name()
+                ))),
+            }
+        }
+    };
+}
+
+impl Value {
+    checked_binop!(checked_add, checked_add, add, "add");
+    checked_binop!(checked_sub, checked_sub, sub, "subtract");
+    checked_binop!(checked_mul, checked_mul, mul, "multiply");
+    checked_binop!(checked_div, checked_div, div, "divide");
+    checked_binop!(checked_rem, checked_rem, rem, "modulo");
+
+    /// Checked negation. Returns `Err` on overflow or type mismatch.
+    pub fn checked_neg(&self) -> Result<Value, ValueArithmeticError> {
+        match self {
+            Value::Integer(n) => n.checked_neg().map(Value::Integer).map_err(ValueArithmeticError),
+            Value::Float(f) => Ok(Value::Float(f.neg())),
+            _ => Err(ValueArithmeticError(format!("cannot negate {}", self.type_name()))),
+        }
+    }
+}
+
+// ============================================================
+// Arithmetic operators (delegate to checked, panic on error)
 // ============================================================
 
 impl ops::Add for Value {
     type Output = Value;
-
     fn add(self, rhs: Value) -> Value {
         match (&self, &rhs) {
-            (Value::Integer(a), Value::Integer(b)) => {
-                Value::Integer(a.checked_add(b).expect("integer add overflow"))
-            }
-            (Value::Float(a), Value::Float(b)) => {
-                Value::Float(a.add(b).expect("float add type mismatch"))
-            }
-            (Value::Integer(a), Value::Float(b)) => {
-                let af = UzonFloat::new(a.value as f64);
-                Value::Float(af.add(b).expect("float add type mismatch"))
-            }
-            (Value::Float(a), Value::Integer(b)) => {
-                let bf = UzonFloat::new(b.value as f64);
-                Value::Float(a.add(&bf).expect("float add type mismatch"))
-            }
-            (Value::String(a), Value::String(b)) => {
-                Value::String(format!("{a}{b}"))
-            }
-            _ => panic!("cannot add {} and {}", self.type_name(), rhs.type_name()),
+            (Value::String(a), Value::String(b)) => Value::String(format!("{a}{b}")),
+            _ => self.checked_add(&rhs).expect("arithmetic error"),
         }
     }
 }
 
 impl ops::Sub for Value {
     type Output = Value;
-
     fn sub(self, rhs: Value) -> Value {
-        match (&self, &rhs) {
-            (Value::Integer(a), Value::Integer(b)) => {
-                Value::Integer(a.checked_sub(b).expect("integer sub overflow"))
-            }
-            (Value::Float(a), Value::Float(b)) => {
-                Value::Float(a.sub(b).expect("float sub type mismatch"))
-            }
-            (Value::Integer(a), Value::Float(b)) => {
-                let af = UzonFloat::new(a.value as f64);
-                Value::Float(af.sub(b).expect("float sub type mismatch"))
-            }
-            (Value::Float(a), Value::Integer(b)) => {
-                let bf = UzonFloat::new(b.value as f64);
-                Value::Float(a.sub(&bf).expect("float sub type mismatch"))
-            }
-            _ => panic!("cannot subtract {} from {}", rhs.type_name(), self.type_name()),
-        }
+        self.checked_sub(&rhs).expect("arithmetic error")
     }
 }
 
 impl ops::Mul for Value {
     type Output = Value;
-
     fn mul(self, rhs: Value) -> Value {
-        match (&self, &rhs) {
-            (Value::Integer(a), Value::Integer(b)) => {
-                Value::Integer(a.checked_mul(b).expect("integer mul overflow"))
-            }
-            (Value::Float(a), Value::Float(b)) => {
-                Value::Float(a.mul(b).expect("float mul type mismatch"))
-            }
-            (Value::Integer(a), Value::Float(b)) => {
-                let af = UzonFloat::new(a.value as f64);
-                Value::Float(af.mul(b).expect("float mul type mismatch"))
-            }
-            (Value::Float(a), Value::Integer(b)) => {
-                let bf = UzonFloat::new(b.value as f64);
-                Value::Float(a.mul(&bf).expect("float mul type mismatch"))
-            }
-            _ => panic!("cannot multiply {} and {}", self.type_name(), rhs.type_name()),
-        }
+        self.checked_mul(&rhs).expect("arithmetic error")
     }
 }
 
 impl ops::Div for Value {
     type Output = Value;
-
     fn div(self, rhs: Value) -> Value {
-        match (&self, &rhs) {
-            (Value::Integer(a), Value::Integer(b)) => {
-                Value::Integer(a.checked_div(b).expect("integer division error"))
-            }
-            (Value::Float(a), Value::Float(b)) => {
-                Value::Float(a.div(b).expect("float div type mismatch"))
-            }
-            (Value::Integer(a), Value::Float(b)) => {
-                let af = UzonFloat::new(a.value as f64);
-                Value::Float(af.div(b).expect("float div type mismatch"))
-            }
-            (Value::Float(a), Value::Integer(b)) => {
-                let bf = UzonFloat::new(b.value as f64);
-                Value::Float(a.div(&bf).expect("float div type mismatch"))
-            }
-            _ => panic!("cannot divide {} by {}", self.type_name(), rhs.type_name()),
-        }
+        self.checked_div(&rhs).expect("arithmetic error")
     }
 }
 
 impl ops::Rem for Value {
     type Output = Value;
-
     fn rem(self, rhs: Value) -> Value {
-        match (&self, &rhs) {
-            (Value::Integer(a), Value::Integer(b)) => {
-                Value::Integer(a.checked_rem(b).expect("integer modulo error"))
-            }
-            (Value::Float(a), Value::Float(b)) => {
-                Value::Float(a.rem(b).expect("float rem type mismatch"))
-            }
-            (Value::Integer(a), Value::Float(b)) => {
-                let af = UzonFloat::new(a.value as f64);
-                Value::Float(af.rem(b).expect("float rem type mismatch"))
-            }
-            (Value::Float(a), Value::Integer(b)) => {
-                let bf = UzonFloat::new(b.value as f64);
-                Value::Float(a.rem(&bf).expect("float rem type mismatch"))
-            }
-            _ => panic!("cannot modulo {} by {}", self.type_name(), rhs.type_name()),
-        }
+        self.checked_rem(&rhs).expect("arithmetic error")
     }
 }
 
 impl ops::Neg for Value {
     type Output = Value;
-
     fn neg(self) -> Value {
-        match &self {
-            Value::Integer(n) => Value::Integer(n.checked_neg().expect("integer neg overflow")),
-            Value::Float(f) => Value::Float(f.neg()),
-            _ => panic!("cannot negate {}", self.type_name()),
-        }
+        self.checked_neg().expect("arithmetic error")
     }
 }
 
@@ -1339,9 +1310,45 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "cannot add")]
+    #[should_panic(expected = "arithmetic error")]
     fn test_add_type_mismatch() {
         let _ = Value::int(1) + Value::Bool(true);
+    }
+
+    // --- Checked arithmetic ---
+
+    #[test]
+    fn test_checked_add_ok() {
+        assert_eq!(Value::int(2).checked_add(&Value::int(3)), Ok(Value::int(5)));
+        assert!(Value::float(1.5).checked_add(&Value::float(2.5)).is_ok());
+    }
+
+    #[test]
+    fn test_checked_add_overflow() {
+        let max = Value::int(i128::MAX);
+        let err = max.checked_add(&Value::int(1));
+        assert!(err.is_err());
+        assert!(err.unwrap_err().to_string().contains("overflow"));
+    }
+
+    #[test]
+    fn test_checked_div_zero() {
+        let err = Value::int(10).checked_div(&Value::int(0));
+        assert!(err.is_err());
+        assert!(err.unwrap_err().to_string().contains("zero"));
+    }
+
+    #[test]
+    fn test_checked_type_mismatch() {
+        let err = Value::int(1).checked_add(&Value::Bool(true));
+        assert!(err.is_err());
+        assert!(err.unwrap_err().to_string().contains("cannot"));
+    }
+
+    #[test]
+    fn test_checked_neg() {
+        assert_eq!(Value::int(5).checked_neg(), Ok(Value::int(-5)));
+        assert!(Value::Bool(true).checked_neg().is_err());
     }
 
     // --- Primitive arithmetic ---
