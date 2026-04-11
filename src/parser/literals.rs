@@ -67,10 +67,6 @@ impl Parser {
                 self.advance();
                 Ok(Node::new(NodeKind::NanLiteral, tok.line, tok.col))
             }
-            TokenType::Self_ => {
-                self.advance();
-                Ok(Node::new(NodeKind::SelfRef, tok.line, tok.col))
-            }
             TokenType::Env => {
                 self.advance();
                 Ok(Node::new(NodeKind::EnvRef, tok.line, tok.col))

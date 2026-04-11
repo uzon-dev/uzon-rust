@@ -17,11 +17,6 @@ impl Evaluator {
         exclude: Option<&str>,
         node: &Node,
     ) -> Result<Value> {
-        // self.name
-        if matches!(object.kind, NodeKind::SelfRef) {
-            return Ok(scope.get(member, exclude).cloned().unwrap_or(Value::Undefined));
-        }
-
         // env.NAME
         if matches!(object.kind, NodeKind::EnvRef) {
             return Ok(self.env.get(member).map(|s| Value::String(s.clone())).unwrap_or(Value::Undefined));

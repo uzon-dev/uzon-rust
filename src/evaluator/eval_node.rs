@@ -31,21 +31,17 @@ impl Evaluator {
                 }
                 // Suggest correct form for case-variant typos of keywords
                 let lower = name.to_ascii_lowercase();
-                let hint = if lower != *name
+                if lower != *name
                     && (crate::token::keyword_token_type(&lower).is_some()
-                        || matches!(lower.as_str(), "lazy" | "type"))
+                        || crate::token::is_reserved_keyword(&lower))
                 {
-                    format!("; did you mean '{}'?", lower)
-                } else {
-                    String::new()
-                };
-                Err(UzonError::runtime(
-                    format!("unknown identifier '{name}'{hint}"),
-                    node.span.line, node.span.col,
-                ))
-            }
-            NodeKind::SelfRef => {
-                Err(UzonError::runtime("standalone 'self' is not valid; use self.name", node.span.line, node.span.col))
+                    return Err(UzonError::runtime(
+                        format!("unknown identifier '{name}'; did you mean '{lower}'?"),
+                        node.span.line, node.span.col,
+                    ));
+                }
+                // §5.12: unresolved bare name evaluates to undefined
+                Ok(Value::Undefined)
             }
             NodeKind::EnvRef => {
                 Err(UzonError::runtime("standalone 'env' is not valid; use env.NAME", node.span.line, node.span.col))

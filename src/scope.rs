@@ -44,8 +44,8 @@ pub enum TypeDefKind {
 /// Lexical scope with parent chain for nested structs (§5.12).
 ///
 /// The scope chain allows nested structs to access bindings and types from
-/// enclosing scopes. The self-exclusion rule (§5.12) prevents a binding from
-/// seeing its own value during evaluation.
+/// enclosing scopes. The own-name exclusion rule (§5.12) prevents a binding
+/// from seeing its own value during evaluation.
 #[derive(Debug, Clone)]
 pub struct Scope {
     bindings: BTreeMap<String, Value>,
@@ -76,7 +76,7 @@ impl Scope {
 
     /// Look up a binding in the scope chain.
     ///
-    /// `exclude`: if Some, skip this name in the current scope (self-exclusion rule §5.12).
+    /// `exclude`: if Some, skip this name in the current scope (own-name exclusion rule §5.12).
     /// The exclusion only applies to the current scope; parent lookups are unaffected.
     pub fn get(&self, name: &str, exclude: Option<&str>) -> Option<&Value> {
         if exclude != Some(name) {

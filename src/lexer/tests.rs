@@ -34,14 +34,12 @@ fn test_string_literal() {
 
 #[test]
 fn test_string_interpolation() {
-    let toks = types(r#""hello {self.name}!""#);
+    let toks = types(r#""hello {name}!""#);
     assert_eq!(
         toks,
         vec![
             TokenType::String,
             TokenType::InterpStart,
-            TokenType::Self_,
-            TokenType::Dot,
             TokenType::Identifier,
             TokenType::InterpEnd,
             TokenType::String,
@@ -223,6 +221,8 @@ fn test_comment_lines_tracked() {
 #[test]
 fn test_reserved_keyword_rejected() {
     let result = Lexer::new("type is 1").tokenize();
+    assert!(result.is_err());
+    let result = Lexer::new("self.name").tokenize();
     assert!(result.is_err());
 }
 

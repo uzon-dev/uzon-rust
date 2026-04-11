@@ -88,8 +88,6 @@ pub enum NodeKind {
     Identifier {
         name: String,
     },
-    /// `self` keyword for lexical scope resolution (§5.12).
-    SelfRef,
     /// `env` keyword for environment variable access (§5.13).
     EnvRef,
 

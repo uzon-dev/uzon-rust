@@ -171,7 +171,7 @@ impl Evaluator {
         // Reject `undefined` literal as binding value (spec §3.1)
         if matches!(binding.value.kind, NodeKind::UndefinedLiteral) {
             return Err(UzonError::syntax(
-                "literal 'undefined' cannot be assigned to a binding; use expressions like self.missing instead",
+                "literal 'undefined' cannot be assigned to a binding; reference a missing name instead",
                 binding.value.span.line,
                 binding.value.span.col,
             ));
@@ -202,9 +202,9 @@ impl Evaluator {
         Self::check_list_annotation_required(&value, binding)?;
 
         // §3.2: Duplicate binding names are forbidden UNLESS the new binding
-        // references self.<name> (self-exclusion pattern, §5.12).
+        // references its own name (own-name exclusion pattern, §5.12).
         if scope.has(&binding.name) {
-            if !Self::expr_references_self_name(&binding.value, &binding.name) {
+            if !Self::expr_references_name(&binding.value, &binding.name) {
                 return Err(UzonError::syntax(
                     format!("duplicate binding '{}' in the same scope", binding.name),
                     binding.span.line,

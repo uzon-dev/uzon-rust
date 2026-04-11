@@ -19,10 +19,10 @@ fn main() {
     let source = r#"
         a is 10
         b is 20
-        sum is self.a + self.b
-        product is self.a * self.b
-        negative is -self.a
-        complex is (self.a + self.b) * 2 - 5
+        sum is a + b
+        product is a * b
+        negative is -a
+        complex is (a + b) * 2 - 5
     "#;
 
     let bindings = from_str(source).expect("parse failed");
@@ -38,9 +38,9 @@ fn main() {
     let source = r#"
         first is "Hello"
         last is "World"
-        greeting is self.first ++ ", " ++ self.last ++ "!"
-        repeated is self.first ** 3
-        interpolated is "Result: {self.first ++ " " ++ self.last}"
+        greeting is first ++ ", " ++ last ++ "!"
+        repeated is first ** 3
+        interpolated is "Result: {first ++ " " ++ last}"
     "#;
 
     let bindings = from_str(source).expect("parse failed");
@@ -55,11 +55,11 @@ fn main() {
 
     let source = r#"
         score is 85
-        grade is if self.score >= 90 then "A"
-                 else if self.score >= 80 then "B"
-                 else if self.score >= 70 then "C"
+        grade is if score >= 90 then "A"
+                 else if score >= 80 then "B"
+                 else if score >= 70 then "C"
                  else "F"
-        passed is self.score >= 60
+        passed is score >= 60
     "#;
 
     let bindings = from_str(source).expect("parse failed");
@@ -81,12 +81,12 @@ fn main() {
             port is 8080,
             debug is false
         }
-        production is self.base extends {
+        production is base extends {
             host is "prod.example.com",
             port is 443,
             tls is true
         }
-        staging is self.base with { host is "staging.example.com" }
+        staging is base with { host is "staging.example.com" }
     "#;
 
     let bindings = from_str(source).expect("parse failed");
@@ -114,10 +114,10 @@ fn main() {
 
     let source = r#"
         add is function a as i32, b as i32 returns i32 { a + b }
-        result is self.add(3, 4)
+        result is add(3, 4)
 
         double is function x as i32 returns i32 { x * 2 }
-        doubled is self.double(21)
+        doubled is double(21)
     "#;
 
     let bindings = from_str(source).expect("parse failed");
@@ -125,17 +125,17 @@ fn main() {
     println!("  add(3, 4) = {}", bindings["result"]);
     println!("  double(21) = {}", bindings["doubled"]);
 
-    // ── 6. Self-references and declarative ordering ──────────────────
+    // ── 6. Bare name resolution and declarative ordering ──────────────
     //
     // UZON bindings are declarative — order doesn't matter.
-    // `self.` references resolve regardless of declaration order.
+    // Bare name references resolve through the scope chain.
 
     println!("\n=== Declarative ordering ===");
 
     let source = r#"
-        greeting is "Hello, " ++ self.name ++ "!"
+        greeting is "Hello, " ++ name ++ "!"
         name is "Alice"
-        full is self.greeting ++ " Age: " ++ (self.age to string)
+        full is greeting ++ " Age: " ++ (age to string)
         age is 30
     "#;
 
@@ -153,18 +153,18 @@ fn main() {
 
     let source = r#"
         items is [3, 1, 4, 1, 5, 9, 2, 6]
-        count is std.len(self.items)
-        sorted is std.sort(self.items, function a as i64, b as i64 returns bool { a < b })
-        has_5 is std.has(self.items, 5)
-        has_7 is std.has(self.items, 7)
+        count is std.len(items)
+        sorted is std.sort(items, function a as i64, b as i64 returns bool { a < b })
+        has_5 is std.has(items, 5)
+        has_7 is std.has(items, 7)
 
         text is "  Hello, World!  "
-        trimmed is std.trim(self.text)
-        upper is std.upper(self.text)
-        lower is std.lower(self.text)
+        trimmed is std.trim(text)
+        upper is std.upper(text)
+        lower is std.lower(text)
 
         words is std.split("one,two,three", ",")
-        joined is std.join(self.words, " | ")
+        joined is std.join(words, " | ")
 
         keys is std.keys({ a is 1, b is 2, c is 3 })
         vals is std.values({ x is 10, y is 20 })
@@ -190,9 +190,9 @@ fn main() {
             host is "localhost",
             port is null
         }
-        host is self.config.host or else "0.0.0.0"
-        port is self.config.port or else 8080
-        missing is self.config.timeout or else 30
+        host is config.host or else "0.0.0.0"
+        port is config.port or else 8080
+        missing is config.timeout or else 30
     "#;
 
     let bindings = from_str(source).expect("parse failed");
@@ -207,9 +207,9 @@ fn main() {
 
     let source = r#"
         numbers is [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-        doubled is std.map(self.numbers, function x as i64 returns i64 { x * 2 })
-        evens is std.filter(self.numbers, function x as i64 returns bool { x % 2 is 0 })
-        total is std.reduce(self.numbers, 0, function acc as i64, x as i64 returns i64 { acc + x })
+        doubled is std.map(numbers, function x as i64 returns i64 { x * 2 })
+        evens is std.filter(numbers, function x as i64 returns bool { x % 2 is 0 })
+        total is std.reduce(numbers, 0, function acc as i64, x as i64 returns i64 { acc + x })
     "#;
 
     let bindings = from_str(source).expect("parse failed");
@@ -225,12 +225,12 @@ fn main() {
 
     let source = r#"
         x is 42
-        gt is self.x > 40
-        lt is self.x < 50
-        eq is self.x is 42
-        ne is self.x is not 0
-        both is self.gt and self.lt
-        either is self.x < 0 or self.x > 0
+        gt is x > 40
+        lt is x < 50
+        eq is x is 42
+        ne is x is not 0
+        both is gt and lt
+        either is x < 0 or x > 0
     "#;
 
     let bindings = from_str(source).expect("parse failed");

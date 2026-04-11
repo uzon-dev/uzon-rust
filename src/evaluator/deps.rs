@@ -27,7 +27,7 @@ impl Evaluator {
             let mut dep_set = HashSet::new();
             self.collect_deps(&binding.value, &names, &name_to_idx, &binding.name, scope, &mut dep_set);
             self.collect_type_deps(&binding.value, &called_to_idx, &mut dep_set);
-            dep_set.remove(&i); // self-exclusion
+            dep_set.remove(&i); // a binding does not depend on itself
             deps.push(dep_set);
         }
 
@@ -120,9 +120,9 @@ impl Evaluator {
     pub(crate) fn collect_function_calls<'a>(node: &'a Node, func_names: &HashSet<&str>, calls: &mut HashSet<&'a str>) {
         match &node.kind {
             NodeKind::FunctionCall { callee, args } => {
-                if let NodeKind::MemberAccess { object, member } = &callee.kind {
-                    if matches!(object.kind, NodeKind::SelfRef) && func_names.contains(member.as_str()) {
-                        calls.insert(member.as_str());
+                if let NodeKind::Identifier { name } = &callee.kind {
+                    if func_names.contains(name.as_str()) {
+                        calls.insert(name.as_str());
                     }
                 }
                 Self::collect_function_calls(callee, func_names, calls);
@@ -249,63 +249,64 @@ impl Evaluator {
         }
     }
 
-    /// Check if an expression tree contains `self.<name>` (self-exclusion reference).
-    pub(crate) fn expr_references_self_name(node: &Node, name: &str) -> bool {
+    /// Check if an expression tree contains a bare reference to `name` (own-name reference).
+    pub(crate) fn expr_references_name(node: &Node, name: &str) -> bool {
         match &node.kind {
-            NodeKind::MemberAccess { object, member } => {
-                if let NodeKind::SelfRef = &object.kind {
-                    if member == name {
-                        return true;
-                    }
+            NodeKind::Identifier { name: ident } => {
+                if ident == name {
+                    return true;
                 }
-                Self::expr_references_self_name(object, name)
+                false
+            }
+            NodeKind::MemberAccess { object, .. } => {
+                Self::expr_references_name(object, name)
             }
             NodeKind::BinaryOp { left, right, .. } | NodeKind::OrElse { left, right } => {
-                Self::expr_references_self_name(left, name)
-                    || Self::expr_references_self_name(right, name)
+                Self::expr_references_name(left, name)
+                    || Self::expr_references_name(right, name)
             }
-            NodeKind::UnaryOp { operand, .. } => Self::expr_references_self_name(operand, name),
+            NodeKind::UnaryOp { operand, .. } => Self::expr_references_name(operand, name),
             NodeKind::IfExpr { condition, then_branch, else_branch } => {
-                Self::expr_references_self_name(condition, name)
-                    || Self::expr_references_self_name(then_branch, name)
-                    || Self::expr_references_self_name(else_branch, name)
+                Self::expr_references_name(condition, name)
+                    || Self::expr_references_name(then_branch, name)
+                    || Self::expr_references_name(else_branch, name)
             }
             NodeKind::TypeAnnotation { expr, .. }
             | NodeKind::Conversion { expr, .. }
-            | NodeKind::Grouping { expr } => Self::expr_references_self_name(expr, name),
+            | NodeKind::Grouping { expr } => Self::expr_references_name(expr, name),
             NodeKind::FunctionExpr { body_bindings, body_expr, .. } => {
-                Self::expr_references_self_name(body_expr, name)
-                    || body_bindings.iter().any(|b| Self::expr_references_self_name(&b.value, name))
+                Self::expr_references_name(body_expr, name)
+                    || body_bindings.iter().any(|b| Self::expr_references_name(&b.value, name))
             }
             NodeKind::FunctionCall { callee, args } => {
-                Self::expr_references_self_name(callee, name)
-                    || args.iter().any(|a| Self::expr_references_self_name(a, name))
+                Self::expr_references_name(callee, name)
+                    || args.iter().any(|a| Self::expr_references_name(a, name))
             }
             NodeKind::ListLiteral { elements } | NodeKind::TupleLiteral { elements } => {
-                elements.iter().any(|e| Self::expr_references_self_name(e, name))
+                elements.iter().any(|e| Self::expr_references_name(e, name))
             }
             NodeKind::StructLiteral { fields } => {
-                fields.iter().any(|b| Self::expr_references_self_name(&b.value, name))
+                fields.iter().any(|b| Self::expr_references_name(&b.value, name))
             }
             NodeKind::StructOverride { base, overrides } => {
-                Self::expr_references_self_name(base, name)
-                    || Self::expr_references_self_name(overrides, name)
+                Self::expr_references_name(base, name)
+                    || Self::expr_references_name(overrides, name)
             }
             NodeKind::StructExtension { base, extension } => {
-                Self::expr_references_self_name(base, name)
-                    || Self::expr_references_self_name(extension, name)
+                Self::expr_references_name(base, name)
+                    || Self::expr_references_name(extension, name)
             }
-            NodeKind::NamedVariant { value, .. } => Self::expr_references_self_name(value, name),
+            NodeKind::NamedVariant { value, .. } => Self::expr_references_name(value, name),
             NodeKind::FieldExtraction { .. } => true,
             NodeKind::CaseExpr { scrutinee, when_clauses, else_branch } => {
-                Self::expr_references_self_name(scrutinee, name)
-                    || when_clauses.iter().any(|w| Self::expr_references_self_name(&w.result, name))
-                    || Self::expr_references_self_name(else_branch, name)
+                Self::expr_references_name(scrutinee, name)
+                    || when_clauses.iter().any(|w| Self::expr_references_name(&w.result, name))
+                    || Self::expr_references_name(else_branch, name)
             }
             NodeKind::StringLiteral { parts } => {
                 parts.iter().any(|p| {
                     if let StringPart::Interpolation(n) = p {
-                        Self::expr_references_self_name(n, name)
+                        Self::expr_references_name(n, name)
                     } else {
                         false
                     }
@@ -325,14 +326,8 @@ impl Evaluator {
         deps: &mut HashSet<usize>,
     ) {
         match &node.kind {
-            NodeKind::MemberAccess { object, member, .. } => {
-                if matches!(object.kind, NodeKind::SelfRef) {
-                    if let Some(&idx) = name_to_idx.get(member.as_str()) {
-                        deps.insert(idx);
-                    }
-                } else {
-                    self.collect_deps(object, names, name_to_idx, _exclude, _scope, deps);
-                }
+            NodeKind::MemberAccess { object, .. } => {
+                self.collect_deps(object, names, name_to_idx, _exclude, _scope, deps);
             }
             NodeKind::BinaryOp { left, right, .. } => {
                 self.collect_deps(left, names, name_to_idx, _exclude, _scope, deps);

@@ -38,7 +38,6 @@ pub enum TokenType {
     Else,
     Case,
     When,
-    Self_,
     Env,
     Struct,
     In,
@@ -145,7 +144,6 @@ pub fn keyword_token_type(s: &str) -> Option<TokenType> {
         "else" => Some(TokenType::Else),
         "case" => Some(TokenType::Case),
         "when" => Some(TokenType::When),
-        "self" => Some(TokenType::Self_),
         "env" => Some(TokenType::Env),
         "struct" => Some(TokenType::Struct),
         "in" => Some(TokenType::In),
@@ -154,7 +152,7 @@ pub fn keyword_token_type(s: &str) -> Option<TokenType> {
         "default" => Some(TokenType::Default),
         "extends" => Some(TokenType::Extends),
         // Reserved keywords (§2.5): recognized but no distinct token type.
-        "lazy" | "type" => None,
+        "lazy" | "type" | "self" => None,
         _ => None,
     }
 }
@@ -191,7 +189,6 @@ pub fn is_value_token(tt: TokenType) -> bool {
             | TokenType::Inf
             | TokenType::Nan
             | TokenType::Undefined
-            | TokenType::Self_
             | TokenType::Env
             | TokenType::RParen
             | TokenType::RBracket
@@ -201,5 +198,5 @@ pub fn is_value_token(tt: TokenType) -> bool {
 
 /// Returns true if the given string is a reserved keyword for future use (§2.5).
 pub fn is_reserved_keyword(s: &str) -> bool {
-    matches!(s, "lazy" | "type")
+    matches!(s, "lazy" | "type" | "self")
 }
