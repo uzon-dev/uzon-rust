@@ -336,9 +336,9 @@ impl Evaluator {
                         }
                     }
                 }
-                let mut result = a.clone();
+                let mut result = a.elements.clone();
                 result.extend(b.iter().cloned());
-                Ok(Value::List(result))
+                Ok(Value::list(result))
             }
             _ => Err(UzonError::type_error(
                 format!("'++' requires string or list operands, got {} and {}", lv.type_name(), rv.type_name()),
@@ -378,7 +378,7 @@ impl Evaluator {
                 for _ in 0..count {
                     result.extend(items.iter().cloned());
                 }
-                Ok(Value::List(result))
+                Ok(Value::list(result))
             }
             _ => Err(UzonError::type_error(
                 format!("'**' requires string or list left operand, got {}", lv.type_name()),

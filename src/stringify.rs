@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: © 2026 Suho Kang
 // SPDX-License-Identifier: MIT
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write;
 
 use indexmap::IndexMap;
@@ -33,10 +33,11 @@ pub fn to_string(values: &BTreeMap<String, Value>) -> String {
 /// Generate UZON text from a map of bindings with custom options.
 pub fn to_string_with_options(values: &BTreeMap<String, Value>, options: &StringifyOptions) -> String {
     let mut out = String::new();
+    let mut st = HashSet::new();
     let names: Vec<&String> = values.keys().collect();
     for (i, name) in names.iter().enumerate() {
         let value = &values[*name];
-        write_binding(&mut out, name, value, 0, options);
+        write_binding(&mut out, name, value, 0, options, &mut st);
         if i + 1 < names.len() {
             out.push('\n');
         }
@@ -51,38 +52,62 @@ fn write_binding(
     value: &Value,
     depth: usize,
     options: &StringifyOptions,
+    st: &mut HashSet<String>,
 ) {
     write_indent(out, depth, options);
     write_identifier(out, name);
 
-    // E.4: prefer `are` for non-empty lists
-    if let Value::List(items) = value {
-        if !items.is_empty() {
-            write_are_list(out, items, depth, options);
-            return;
+    // E.4: prefer `are` for non-empty lists when safe
+    if let Value::List(list) = value {
+        if !list.is_empty() && is_are_safe(list, st) {
+            // All-null lists with element_type need bracket syntax for `as [Type]`
+            if !(list.iter().all(|v| v.is_null()) && list.element_type.is_some()) {
+                write_are_list(out, list, depth, options, st);
+                return;
+            }
         }
     }
 
     out.push_str(" is ");
-    write_value(out, value, depth, options);
+    write_value(out, value, depth, options, st);
     out.push('\n');
 }
 
+/// Check whether `are` syntax is safe for a list.
+/// Unsafe when elements produce `called`/`as` suffixes or complex `from` clauses.
+fn is_are_safe(items: &[Value], _st: &HashSet<String>) -> bool {
+    !items.iter().any(|v| match v {
+        // Named enum: produces `called` (first def) or `as TypeName` (subsequent)
+        Value::Enum(e) => e.type_name.is_some(),
+        // Unions and tagged unions are always complex in `are` context
+        Value::Union(_) | Value::TaggedUnion(_) => true,
+        // Lists with element_type produce `[] as [Type]` or `[...] as [Type]` — trailing `as`
+        Value::List(l) => l.element_type.is_some(),
+        _ => false,
+    })
+}
+
 /// Write a list using `are` syntax (E.4).
-///
-/// Inline when short enough; multiline with commas otherwise (E.2).
-fn write_are_list(out: &mut String, items: &[Value], depth: usize, options: &StringifyOptions) {
+fn write_are_list(
+    out: &mut String,
+    items: &[Value],
+    depth: usize,
+    options: &StringifyOptions,
+    st: &mut HashSet<String>,
+) {
     // Try inline: `name are elem1, elem2, elem3`
     if !has_nested_collection(items) {
         let mut inline = String::from(" are ");
+        let mut inline_st = st.clone();
         for (i, item) in items.iter().enumerate() {
             if i > 0 {
                 inline.push_str(", ");
             }
-            write_value(&mut inline, item, depth, options);
+            write_value(&mut inline, item, depth, options, &mut inline_st);
         }
         inline.push('\n');
         if inline.len() <= 80 {
+            *st = inline_st;
             out.push_str(&inline);
             return;
         }
@@ -92,7 +117,7 @@ fn write_are_list(out: &mut String, items: &[Value], depth: usize, options: &Str
     out.push_str(" are\n");
     for (i, item) in items.iter().enumerate() {
         write_indent(out, depth + 1, options);
-        write_value(out, item, depth + 1, options);
+        write_value(out, item, depth + 1, options, st);
         if i + 1 < items.len() {
             out.push(',');
         }
@@ -124,6 +149,7 @@ fn write_identifier(out: &mut String, name: &str) {
 }
 
 /// Check if an identifier needs quoting or @-prefix escaping.
+/// Per §2.3, `-` is a token boundary character and must trigger quoting.
 fn needs_quoting(name: &str) -> bool {
     if name.is_empty() {
         return true;
@@ -133,7 +159,7 @@ fn needs_quoting(name: &str) -> bool {
         return true;
     }
     for ch in name.chars() {
-        if !ch.is_alphanumeric() && ch != '_' && ch != '-' {
+        if !ch.is_alphanumeric() && ch != '_' {
             return true;
         }
     }
@@ -157,7 +183,13 @@ fn is_stringify_keyword(name: &str) -> bool {
 }
 
 /// Write a value in UZON syntax.
-fn write_value(out: &mut String, value: &Value, depth: usize, options: &StringifyOptions) {
+fn write_value(
+    out: &mut String,
+    value: &Value,
+    depth: usize,
+    options: &StringifyOptions,
+    st: &mut HashSet<String>,
+) {
     match value {
         Value::Null => out.push_str("null"),
         Value::Undefined => out.push_str("undefined"),
@@ -166,12 +198,12 @@ fn write_value(out: &mut String, value: &Value, depth: usize, options: &Stringif
         Value::BigInteger(n) => write!(out, "{n}").unwrap(),
         Value::Float(f) => write_float(out, f.value),
         Value::String(s) => write_string(out, s),
-        Value::List(items) => write_list(out, items, depth, options),
-        Value::Tuple(t) => write_tuple(out, &t.elements, depth, options),
-        Value::Struct(fields) => write_struct(out, fields, depth, options),
-        Value::Enum(e) => write_enum(out, e),
-        Value::Union(u) => write_union(out, u, depth, options),
-        Value::TaggedUnion(tu) => write_tagged_union(out, tu, depth, options),
+        Value::List(list) => write_list(out, list, depth, options, st),
+        Value::Tuple(t) => write_tuple(out, &t.elements, depth, options, st),
+        Value::Struct(fields) => write_struct(out, fields, depth, options, st),
+        Value::Enum(e) => write_enum(out, e, st),
+        Value::Union(u) => write_union(out, u, depth, options, st),
+        Value::TaggedUnion(tu) => write_tagged_union(out, tu, depth, options, st),
         Value::Function(_) => out.push_str("<function>"),
     }
 }
@@ -200,45 +232,88 @@ fn write_string(out: &mut String, s: &str) {
 }
 
 /// Write a list in bracket syntax `[ ... ]`.
-fn write_list(out: &mut String, items: &[Value], depth: usize, options: &StringifyOptions) {
-    if items.is_empty() {
+fn write_list(
+    out: &mut String,
+    list: &UzonList,
+    depth: usize,
+    options: &StringifyOptions,
+    st: &mut HashSet<String>,
+) {
+    if list.is_empty() {
         out.push_str("[]");
+        // Emit type annotation for empty lists that have element_type
+        if let Some(ref et) = list.element_type {
+            out.push_str(" as [");
+            out.push_str(et);
+            out.push(']');
+        }
         return;
     }
 
-    if !has_nested_collection(items) {
-        let inline = format_inline_list(items, depth, options);
+    // All-null lists need type annotation too
+    if list.iter().all(|v| v.is_null()) {
+        if let Some(ref et) = list.element_type {
+            // Inline: [ null, null ] as [Type]
+            let mut inline = String::from("[ ");
+            for (i, _) in list.iter().enumerate() {
+                if i > 0 { inline.push_str(", "); }
+                inline.push_str("null");
+            }
+            inline.push_str(" ] as [");
+            inline.push_str(et);
+            inline.push(']');
+            out.push_str(&inline);
+            return;
+        }
+    }
+
+    if !has_nested_collection(list) {
+        let inline = format_inline_list(list, depth, options, &mut st.clone());
         if inline.len() <= 80 {
             out.push_str(&inline);
             return;
         }
     }
 
-    // Multiline — newline-separated, no commas (E.2)
+    // Multiline — commas between elements (E.2)
     out.push_str("[\n");
-    for item in items.iter() {
+    for (i, item) in list.iter().enumerate() {
         write_indent(out, depth + 1, options);
-        write_value(out, item, depth + 1, options);
+        write_value(out, item, depth + 1, options, st);
+        if i + 1 < list.len() {
+            out.push(',');
+        }
         out.push('\n');
     }
     write_indent(out, depth, options);
     out.push(']');
 }
 
-fn format_inline_list(items: &[Value], depth: usize, options: &StringifyOptions) -> String {
+fn format_inline_list(
+    items: &[Value],
+    depth: usize,
+    options: &StringifyOptions,
+    st: &mut HashSet<String>,
+) -> String {
     let mut s = String::from("[ ");
     for (i, item) in items.iter().enumerate() {
         if i > 0 {
             s.push_str(", ");
         }
-        write_value(&mut s, item, depth, options);
+        write_value(&mut s, item, depth, options, st);
     }
     s.push_str(" ]");
     s
 }
 
 /// Write a tuple `(a, b, c)` with trailing comma for single-element (§3.3).
-fn write_tuple(out: &mut String, elements: &[Value], depth: usize, options: &StringifyOptions) {
+fn write_tuple(
+    out: &mut String,
+    elements: &[Value],
+    depth: usize,
+    options: &StringifyOptions,
+    st: &mut HashSet<String>,
+) {
     if elements.is_empty() {
         out.push_str("()");
         return;
@@ -249,7 +324,7 @@ fn write_tuple(out: &mut String, elements: &[Value], depth: usize, options: &Str
         if i > 0 {
             out.push_str(", ");
         }
-        write_value(out, elem, depth, options);
+        write_value(out, elem, depth, options, st);
     }
     if elements.len() == 1 {
         out.push(',');
@@ -263,6 +338,7 @@ fn write_struct(
     fields: &IndexMap<String, Value>,
     depth: usize,
     options: &StringifyOptions,
+    st: &mut HashSet<String>,
 ) {
     if fields.is_empty() {
         out.push_str("{}");
@@ -270,7 +346,7 @@ fn write_struct(
     }
 
     if fields.len() <= options.inline_threshold && !has_nested_struct_fields(fields) {
-        let inline = format_inline_struct(fields, depth, options);
+        let inline = format_inline_struct(fields, depth, options, &mut st.clone());
         if inline.len() <= 80 {
             out.push_str(&inline);
             return;
@@ -279,7 +355,7 @@ fn write_struct(
 
     out.push_str("{\n");
     for (name, value) in fields {
-        write_binding(out, name, value, depth + 1, options);
+        write_binding(out, name, value, depth + 1, options, st);
     }
     write_indent(out, depth, options);
     out.push('}');
@@ -289,6 +365,7 @@ fn format_inline_struct(
     fields: &IndexMap<String, Value>,
     depth: usize,
     options: &StringifyOptions,
+    st: &mut HashSet<String>,
 ) -> String {
     let mut s = String::from("{ ");
     let entries: Vec<_> = fields.iter().collect();
@@ -298,22 +375,39 @@ fn format_inline_struct(
         }
         write_identifier(&mut s, name);
         s.push_str(" is ");
-        write_value(&mut s, value, depth, options);
+        write_value(&mut s, value, depth, options, st);
     }
     s.push_str(" }");
     s
 }
 
 fn has_nested_collection(items: &[Value]) -> bool {
-    items.iter().any(|v| matches!(v, Value::Struct(_) | Value::List(_) | Value::Tuple(_)))
+    items.iter().any(|v| matches!(v,
+        Value::Struct(_) | Value::List(_) | Value::Tuple(_)
+        | Value::Enum(_) | Value::Union(_) | Value::TaggedUnion(_)
+    ))
 }
 
 fn has_nested_struct_fields(fields: &IndexMap<String, Value>) -> bool {
-    fields.values().any(|v| matches!(v, Value::Struct(_) | Value::List(_) | Value::Tuple(_)))
+    fields.values().any(|v| matches!(v,
+        Value::Struct(_) | Value::List(_) | Value::Tuple(_)
+    ))
 }
 
-/// Write an enum value: `variant from v1, v2, v3` (§3.5).
-fn write_enum(out: &mut String, e: &UzonEnum) {
+/// Write an enum value.
+/// First occurrence of a named type: `variant from v1, v2, v3 called TypeName`
+/// Subsequent: `variant as TypeName` (shorthand)
+fn write_enum(out: &mut String, e: &UzonEnum, st: &mut HashSet<String>) {
+    if let Some(ref type_name) = e.type_name {
+        if st.contains(type_name) {
+            // Shorthand: variant as TypeName
+            write_identifier(out, &e.value);
+            out.push_str(" as ");
+            write_identifier(out, type_name);
+            return;
+        }
+    }
+    // Full definition
     write_identifier(out, &e.value);
     out.push_str(" from ");
     for (i, v) in e.variants.iter().enumerate() {
@@ -325,12 +419,29 @@ fn write_enum(out: &mut String, e: &UzonEnum) {
     if let Some(ref type_name) = e.type_name {
         out.push_str(" called ");
         write_identifier(out, type_name);
+        st.insert(type_name.clone());
     }
 }
 
-/// Write a union value: `value from union type1, type2` (§3.6).
-fn write_union(out: &mut String, u: &UzonUnion, depth: usize, options: &StringifyOptions) {
-    write_value(out, &u.value, depth, options);
+/// Write a union value.
+/// First occurrence: `value from union type1, type2 called TypeName`
+/// Subsequent: `value as TypeName`
+fn write_union(
+    out: &mut String,
+    u: &UzonUnion,
+    depth: usize,
+    options: &StringifyOptions,
+    st: &mut HashSet<String>,
+) {
+    if let Some(ref type_name) = u.type_name {
+        if st.contains(type_name) {
+            write_value(out, &u.value, depth, options, st);
+            out.push_str(" as ");
+            write_identifier(out, type_name);
+            return;
+        }
+    }
+    write_value(out, &u.value, depth, options, st);
     out.push_str(" from union ");
     for (i, t) in u.types.iter().enumerate() {
         if i > 0 {
@@ -341,17 +452,31 @@ fn write_union(out: &mut String, u: &UzonUnion, depth: usize, options: &Stringif
     if let Some(ref type_name) = u.type_name {
         out.push_str(" called ");
         write_identifier(out, type_name);
+        st.insert(type_name.clone());
     }
 }
 
-/// Write a tagged union value: `value named tag from v1, v2` (§3.7).
+/// Write a tagged union value.
+/// First occurrence: `value named tag from v1 as t1, v2 as t2 called TypeName`
+/// Subsequent: `value as TypeName named tag`
 fn write_tagged_union(
     out: &mut String,
     tu: &UzonTaggedUnion,
     depth: usize,
     options: &StringifyOptions,
+    st: &mut HashSet<String>,
 ) {
-    write_value(out, &tu.value, depth, options);
+    if let Some(ref type_name) = tu.type_name {
+        if st.contains(type_name) {
+            write_value(out, &tu.value, depth, options, st);
+            out.push_str(" as ");
+            write_identifier(out, type_name);
+            out.push_str(" named ");
+            write_identifier(out, &tu.tag);
+            return;
+        }
+    }
+    write_value(out, &tu.value, depth, options, st);
     out.push_str(" named ");
     write_identifier(out, &tu.tag);
     out.push_str(" from ");
@@ -362,13 +487,16 @@ fn write_tagged_union(
         }
         write_identifier(out, name);
         if let Some(t) = type_ref {
-            out.push_str(" as ");
-            out.push_str(t);
+            if !t.is_empty() {
+                out.push_str(" as ");
+                out.push_str(t);
+            }
         }
     }
     if let Some(ref type_name) = tu.type_name {
         out.push_str(" called ");
         write_identifier(out, type_name);
+        st.insert(type_name.clone());
     }
 }
 
@@ -429,7 +557,7 @@ mod tests {
         let mut map = BTreeMap::new();
         map.insert(
             "items".into(),
-            Value::List(vec![Value::int(1), Value::int(2), Value::int(3)]),
+            Value::list(vec![Value::int(1), Value::int(2), Value::int(3)]),
         );
         let result = to_string(&map);
         assert!(result.contains("items are 1, 2, 3"));
@@ -438,7 +566,7 @@ mod tests {
     #[test]
     fn test_empty_list() {
         let mut map = BTreeMap::new();
-        map.insert("items".into(), Value::List(vec![]));
+        map.insert("items".into(), Value::list(vec![]));
         let result = to_string(&map);
         assert!(result.contains("items is []"));
     }
@@ -499,7 +627,7 @@ mod tests {
         let mut map = BTreeMap::new();
         map.insert("Content-Type".into(), Value::String("text/html".into()));
         let result = to_string(&map);
-        assert!(result.contains("Content-Type is \"text/html\""));
+        assert!(result.contains("'Content-Type' is \"text/html\""), "got: {result}");
     }
 
     #[test]

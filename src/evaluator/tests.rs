@@ -54,6 +54,14 @@ fn test_bool_literal() {
 }
 
 #[test]
+fn test_case_variant_typo_rejected() {
+    for input in ["x is True", "x is False", "x is NULL", "x is Null",
+                   "x is Undefined", "x is Inf", "x is NaN"] {
+        assert!(eval(input).is_err(), "{} should be rejected", input);
+    }
+}
+
+#[test]
 fn test_null_literal() {
     assert_eq!(eval_val("x is null", "x"), Value::Null);
 }
@@ -207,7 +215,7 @@ fn test_struct_extension() {
 fn test_list_literal() {
     let v = eval_val("x is [1, 2, 3]", "x");
     if let Value::List(items) = v {
-        assert_eq!(items, vec![Value::int(1), Value::int(2), Value::int(3)]);
+        assert_eq!(items.elements, vec![Value::int(1), Value::int(2), Value::int(3)]);
     } else {
         panic!("expected list");
     }
@@ -410,7 +418,7 @@ fn test_std_len() {
 fn test_std_keys_values() {
     let v = eval_val("s is { a is 1, b is 2 }\nk is std.keys(s)", "k");
     if let Value::List(items) = v {
-        assert_eq!(items, vec![Value::String("a".into()), Value::String("b".into())]);
+        assert_eq!(items.elements, vec![Value::String("a".into()), Value::String("b".into())]);
     } else {
         panic!("expected list");
     }
@@ -443,7 +451,7 @@ fn test_std_map() {
         "doubled"
     );
     if let Value::List(items) = v {
-        assert_eq!(items, vec![Value::int(2), Value::int(4), Value::int(6)]);
+        assert_eq!(items.elements, vec![Value::int(2), Value::int(4), Value::int(6)]);
     } else {
         panic!("expected list");
     }
@@ -456,7 +464,7 @@ fn test_std_filter() {
         "evens"
     );
     if let Value::List(items) = v {
-        assert_eq!(items, vec![Value::int(2), Value::int(4)]);
+        assert_eq!(items.elements, vec![Value::int(2), Value::int(4)]);
     } else {
         panic!("expected list");
     }
@@ -480,7 +488,7 @@ fn test_std_sort() {
         "sorted"
     );
     if let Value::List(items) = v {
-        assert_eq!(items, vec![Value::int(1), Value::int(2), Value::int(3)]);
+        assert_eq!(items.elements, vec![Value::int(1), Value::int(2), Value::int(3)]);
     } else {
         panic!("expected list");
     }
@@ -516,7 +524,7 @@ fn test_std_string_utils() {
 fn test_std_split_join() {
     let v = eval_val(r#"x is std.split("a,b,c", ",")"#, "x");
     if let Value::List(items) = v {
-        assert_eq!(items, vec![
+        assert_eq!(items.elements, vec![
             Value::String("a".into()),
             Value::String("b".into()),
             Value::String("c".into()),

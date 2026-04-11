@@ -278,15 +278,16 @@ impl Evaluator {
                             }
                             resolved.push(v);
                         }
-                        *value = Value::List(resolved);
+                        *value = Value::List(UzonList::with_type(resolved, enum_name.clone()));
                     }
-                } else if let Value::List(items) = &*value {
+                } else if let Value::List(ref mut list) = *value {
                     if let Some(inner_type_name) = inner.path.last() {
-                        for item in items {
+                        for item in list.iter() {
                             if !item.is_null() {
                                 self.check_type_assertion(item, inner_type_name, &binding.value)?;
                             }
                         }
+                        list.element_type = Some(inner_type_name.clone());
                     }
                 }
             }
@@ -302,8 +303,12 @@ impl Evaluator {
 
     /// Check that lists that need type annotations have them (§3.4).
     fn check_list_annotation_required(value: &Value, binding: &Binding) -> Result<()> {
-        if let Value::List(items) = value {
-            if items.is_empty() {
+        if let Value::List(list) = value {
+            // If element_type is already set (from `as [Type]`), no annotation needed
+            if list.element_type.is_some() {
+                return Ok(());
+            }
+            if list.is_empty() {
                 if matches!(binding.value.kind, NodeKind::ListLiteral { ref elements } if elements.is_empty()) {
                     return Err(UzonError::type_error(
                         "empty list requires a type annotation: [] as [Type]",
@@ -312,7 +317,7 @@ impl Evaluator {
                 }
             }
             // §3.4: all-null list without type annotation requires as [Type]
-            if !items.is_empty() && items.iter().all(|v| v.is_null()) {
+            if !list.is_empty() && list.iter().all(|v| v.is_null()) {
                 if !matches!(binding.value.kind, NodeKind::TypeAnnotation { .. }) {
                     return Err(UzonError::type_error(
                         "list with only null elements requires a type annotation: as [Type]",
