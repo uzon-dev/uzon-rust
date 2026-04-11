@@ -69,6 +69,10 @@ impl Evaluator {
         scope: &mut Scope, exclude: Option<&str>, node: &Node,
     ) -> Result<Value> {
         let lv = Self::unwrap_union_owned(self.eval_node(left, scope, exclude)?);
+        // §3.1: undefined in logical operators is a runtime error
+        if lv.is_undefined() {
+            return Err(UzonError::runtime("'and' requires bool operands, got undefined", node.span.line, node.span.col));
+        }
         match lv {
             Value::Bool(false) => {
                 // §5.9: speculatively evaluate right side for type check
@@ -92,6 +96,10 @@ impl Evaluator {
         scope: &mut Scope, exclude: Option<&str>, node: &Node,
     ) -> Result<Value> {
         let lv = Self::unwrap_union_owned(self.eval_node(left, scope, exclude)?);
+        // §3.1: undefined in logical operators is a runtime error
+        if lv.is_undefined() {
+            return Err(UzonError::runtime("'or' requires bool operands, got undefined", node.span.line, node.span.col));
+        }
         match lv {
             Value::Bool(true) => {
                 if let Ok(rv) = self.eval_node(right, scope, exclude) {
@@ -170,6 +178,10 @@ impl Evaluator {
         scope: &mut Scope, exclude: Option<&str>, node: &Node,
     ) -> Result<Value> {
         let lv = self.eval_node(left, scope, exclude)?;
+        // §3.1: undefined in 'is named' is a runtime error
+        if lv.is_undefined() {
+            return Err(UzonError::runtime("'is named' requires tagged union, got undefined", node.span.line, node.span.col));
+        }
         let tag_name = match &right.kind {
             NodeKind::Identifier { name } => name.as_str(),
             _ => return Err(UzonError::syntax("expected variant name after 'is named'", node.span.line, node.span.col)),
@@ -534,9 +546,15 @@ impl Evaluator {
                     node.span.line, node.span.col,
                 )),
             },
-            UnaryOp::Not => match val {
-                Value::Bool(b) => Ok(Value::Bool(!b)),
-                _ => Err(UzonError::type_error("'not' requires bool operand", node.span.line, node.span.col)),
+            UnaryOp::Not => {
+                // §3.1: undefined in logical operators is a runtime error
+                if val.is_undefined() {
+                    return Err(UzonError::runtime("'not' requires bool operand, got undefined", node.span.line, node.span.col));
+                }
+                match val {
+                    Value::Bool(b) => Ok(Value::Bool(!b)),
+                    _ => Err(UzonError::type_error("'not' requires bool operand", node.span.line, node.span.col)),
+                }
             },
         }
     }
