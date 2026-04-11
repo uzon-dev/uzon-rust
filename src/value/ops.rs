@@ -151,6 +151,44 @@ impl Value {
         }
     }
 
+    // --- Mutation ---
+
+    /// Insert or update a field in a struct. Returns the previous value if the key existed.
+    /// Panics if not a struct.
+    pub fn insert(&mut self, key: impl Into<String>, value: impl Into<Value>) -> Option<Value> {
+        match self {
+            Value::Struct(map) => map.insert(key.into(), value.into()),
+            _ => panic!("insert: expected struct, got {}", self.type_name()),
+        }
+    }
+
+    /// Remove a field from a struct. Returns the removed value.
+    /// Panics if not a struct.
+    pub fn remove(&mut self, key: &str) -> Option<Value> {
+        match self {
+            Value::Struct(map) => map.shift_remove(key),
+            _ => panic!("remove: expected struct, got {}", self.type_name()),
+        }
+    }
+
+    /// Push a value onto a list.
+    /// Panics if not a list.
+    pub fn push(&mut self, value: impl Into<Value>) {
+        match self {
+            Value::List(l) => l.elements.push(value.into()),
+            _ => panic!("push: expected list, got {}", self.type_name()),
+        }
+    }
+
+    /// Pop the last value from a list.
+    /// Panics if not a list.
+    pub fn pop(&mut self) -> Option<Value> {
+        match self {
+            Value::List(l) => l.elements.pop(),
+            _ => panic!("pop: expected list, got {}", self.type_name()),
+        }
+    }
+
     /// Navigate a dot-separated path into nested structs.
     ///
     /// ```ignore
@@ -975,6 +1013,32 @@ mod tests {
         let v = Value::Struct(map);
         assert!(v.as_struct().is_some());
         assert_eq!(Value::Null.as_struct(), None);
+    }
+
+    // --- Mutation ---
+
+    #[test]
+    fn test_insert_remove() {
+        let mut v = Value::struct_builder().field("a", 1).build();
+        assert_eq!(v.insert("b", 2), None);
+        assert_eq!(v.get("b"), Some(&Value::int(2)));
+        let old = v.insert("a", 99);
+        assert_eq!(old, Some(Value::int(1)));
+        assert_eq!(v.get("a"), Some(&Value::int(99)));
+        assert_eq!(v.remove("a"), Some(Value::int(99)));
+        assert_eq!(v.get("a"), None);
+    }
+
+    #[test]
+    fn test_push_pop() {
+        let mut v = Value::list(vec![Value::int(1)]);
+        v.push(2);
+        v.push(3);
+        assert_eq!(v.len(), Some(3));
+        assert_eq!(v.pop(), Some(Value::int(3)));
+        assert_eq!(v.pop(), Some(Value::int(2)));
+        assert_eq!(v.pop(), Some(Value::int(1)));
+        assert_eq!(v.pop(), None);
     }
 
     // --- get ---
