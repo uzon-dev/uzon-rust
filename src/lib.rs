@@ -17,3 +17,64 @@ pub use evaluator::{from_str, from_str_plain, from_path, Evaluator, EvalOptions}
 pub use stringify::{to_string, to_string_with_options, StringifyOptions};
 pub use value::{Value, UzonInteger, UzonFloat, IntegerType, FloatType};
 pub use value::ops::ValueConversionError;
+
+/// Construct a [`Value`] using JSON-like syntax.
+///
+/// ```ignore
+/// use uzon::uzon;
+///
+/// let v = uzon!({
+///     "name": "Alice",
+///     "age": 30,
+///     "scores": [90, 85, 92],
+///     "active": true,
+///     "address": {
+///         "city": "Seoul",
+///         "zip": "06000"
+///     }
+/// });
+/// ```
+///
+/// Supported forms:
+/// - `null` → `Value::Null`
+/// - `true`, `false` → `Value::Bool`
+/// - integer literals → `Value::Integer`
+/// - float literals (must contain `.`) → `Value::Float`
+/// - string literals → `Value::String`
+/// - `[a, b, c]` → `Value::List`
+/// - `{ "key": value, ... }` → `Value::Struct`
+/// - `(a, b)` → `Value::Tuple`
+/// - any expression → via `Into<Value>`
+#[macro_export]
+macro_rules! uzon {
+    // null
+    (null) => { $crate::Value::Null };
+
+    // bool
+    (true) => { $crate::Value::Bool(true) };
+    (false) => { $crate::Value::Bool(false) };
+
+    // struct: { "key": value, ... }
+    ({ $($key:tt : $val:tt),* $(,)? }) => {{
+        let mut fields = indexmap::IndexMap::new();
+        $(
+            fields.insert(String::from($key), uzon!($val));
+        )*
+        $crate::Value::Struct(fields)
+    }};
+
+    // list: [a, b, c]
+    ([ $($elem:tt),* $(,)? ]) => {
+        $crate::Value::list(vec![ $( uzon!($elem) ),* ])
+    };
+
+    // tuple: (a, b, ...)
+    (( $($elem:tt),* $(,)? )) => {
+        $crate::Value::Tuple($crate::value::UzonTuple::new(vec![ $( uzon!($elem) ),* ]))
+    };
+
+    // expression fallback (literals, variables, function calls)
+    ($other:expr) => {
+        $crate::Value::from($other)
+    };
+}

@@ -766,6 +766,7 @@ impl Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::uzon;
 
     // --- Accessors ---
 
@@ -1058,6 +1059,62 @@ mod tests {
         assert!(Value::from("a") < Value::from("b"));
         // incompatible types => None
         assert_eq!(Value::int(1).partial_cmp(&Value::Bool(true)), None);
+    }
+
+    // --- uzon! macro ---
+
+    #[test]
+    fn test_uzon_macro_primitives() {
+        assert_eq!(uzon!(null), Value::Null);
+        assert_eq!(uzon!(true), Value::Bool(true));
+        assert_eq!(uzon!(false), Value::Bool(false));
+        assert_eq!(uzon!(42), Value::int(42));
+        assert_eq!(uzon!(3.14), Value::float(3.14));
+        assert_eq!(uzon!("hello"), Value::from("hello"));
+    }
+
+    #[test]
+    fn test_uzon_macro_list() {
+        let v = uzon!([1, 2, 3]);
+        assert_eq!(v.get_index(0), Some(&Value::int(1)));
+        assert_eq!(v.len(), Some(3));
+    }
+
+    #[test]
+    fn test_uzon_macro_struct() {
+        let v = uzon!({
+            "name": "Alice",
+            "age": 30,
+            "active": true
+        });
+        assert_eq!(v.get("name"), Some(&Value::from("Alice")));
+        assert_eq!(v.get("age"), Some(&Value::int(30)));
+        assert_eq!(v.get("active"), Some(&Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_uzon_macro_nested() {
+        let v = uzon!({
+            "server": {
+                "host": "localhost",
+                "port": 8080
+            },
+            "tags": ["web", "api"],
+            "coord": (1, 2)
+        });
+        assert_eq!(v.get_path("server.host"), Some(&Value::from("localhost")));
+        assert_eq!(v.get_path("server.port"), Some(&Value::int(8080)));
+        assert_eq!(v.get("tags").unwrap().get_index(1), Some(&Value::from("api")));
+        let tuple = v.get("coord").unwrap();
+        assert_eq!(tuple.as_tuple().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_uzon_macro_trailing_comma() {
+        let v = uzon!([1, 2,]);
+        assert_eq!(v.len(), Some(2));
+        let v = uzon!({"a": 1, "b": 2,});
+        assert_eq!(v.len(), Some(2));
     }
 
     // --- StructBuilder ---
