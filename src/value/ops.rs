@@ -115,6 +115,61 @@ impl Value {
             _ => None,
         }
     }
+
+
+    /// Get a struct field by key. Returns `None` if not a struct or key missing.
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        match self {
+            Value::Struct(map) => map.get(key),
+            _ => None,
+        }
+    }
+
+    /// Get a list/tuple element by index. Returns `None` if out of bounds or wrong type.
+    pub fn get_index(&self, index: usize) -> Option<&Value> {
+        match self {
+            Value::List(l) => l.elements.get(index),
+            Value::Tuple(t) => t.elements.get(index),
+            _ => None,
+        }
+    }
+
+    /// Get a mutable reference to a struct field.
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
+        match self {
+            Value::Struct(map) => map.get_mut(key),
+            _ => None,
+        }
+    }
+
+    /// Get a mutable reference to a list/tuple element.
+    pub fn get_index_mut(&mut self, index: usize) -> Option<&mut Value> {
+        match self {
+            Value::List(l) => l.elements.get_mut(index),
+            Value::Tuple(t) => t.elements.get_mut(index),
+            _ => None,
+        }
+    }
+
+    /// Navigate a dot-separated path into nested structs.
+    ///
+    /// ```ignore
+    /// value.get_path("server.host") // == value.get("server").and_then(|v| v.get("host"))
+    /// ```
+    pub fn get_path(&self, path: &str) -> Option<&Value> {
+        let mut current = self;
+        for segment in path.split('.') {
+            // Try struct key first, then numeric index
+            if let Some(v) = current.get(segment) {
+                current = v;
+            } else if let Ok(idx) = segment.parse::<usize>() {
+                current = current.get_index(idx)?;
+            } else {
+                return None;
+            }
+        }
+        Some(current)
+    }
 }
 
 // ============================================================
@@ -719,6 +774,55 @@ mod tests {
         let v = Value::Struct(map);
         assert!(v.as_struct().is_some());
         assert_eq!(Value::Null.as_struct(), None);
+    }
+
+    // --- get ---
+
+    #[test]
+    fn test_get_struct() {
+        let mut map = IndexMap::new();
+        map.insert("name".into(), Value::from("Alice"));
+        let v = Value::Struct(map);
+        assert_eq!(v.get("name"), Some(&Value::from("Alice")));
+        assert_eq!(v.get("missing"), None);
+        assert_eq!(Value::int(1).get("x"), None);
+    }
+
+    #[test]
+    fn test_get_index() {
+        let v = Value::list(vec![Value::int(10), Value::int(20)]);
+        assert_eq!(v.get_index(0), Some(&Value::int(10)));
+        assert_eq!(v.get_index(99), None);
+        assert_eq!(Value::int(1).get_index(0), None);
+    }
+
+    #[test]
+    fn test_get_mut() {
+        let mut map = IndexMap::new();
+        map.insert("x".into(), Value::int(1));
+        let mut v = Value::Struct(map);
+        *v.get_mut("x").unwrap() = Value::int(42);
+        assert_eq!(v.get("x"), Some(&Value::int(42)));
+    }
+
+    #[test]
+    fn test_get_path() {
+        let mut inner = IndexMap::new();
+        inner.insert("host".into(), Value::from("localhost"));
+        inner.insert("port".into(), Value::int(8080));
+        let mut outer = IndexMap::new();
+        outer.insert("server".into(), Value::Struct(inner));
+        outer.insert("items".into(), Value::list(vec![Value::from("a"), Value::from("b")]));
+        let v = Value::Struct(outer);
+
+        assert_eq!(v.get_path("server.host"), Some(&Value::from("localhost")));
+        assert_eq!(v.get_path("server.port"), Some(&Value::int(8080)));
+        assert_eq!(v.get_path("server.missing"), None);
+        assert_eq!(v.get_path("missing.host"), None);
+        // numeric index in path
+        assert_eq!(v.get_path("items.0"), Some(&Value::from("a")));
+        assert_eq!(v.get_path("items.1"), Some(&Value::from("b")));
+        assert_eq!(v.get_path("items.99"), None);
     }
 
     // --- Index ---
