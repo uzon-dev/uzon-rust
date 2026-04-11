@@ -604,6 +604,47 @@ impl PartialOrd for Value {
 }
 
 // ============================================================
+// Struct builder
+// ============================================================
+
+/// Builder for constructing `Value::Struct` ergonomically.
+///
+/// ```ignore
+/// let v = Value::struct_builder()
+///     .field("name", "Alice")
+///     .field("age", 30)
+///     .field("scores", vec![Value::int(90), Value::int(85)])
+///     .build();
+/// ```
+pub struct StructBuilder {
+    fields: IndexMap<String, Value>,
+}
+
+impl StructBuilder {
+    fn new() -> Self {
+        Self { fields: IndexMap::new() }
+    }
+
+    /// Add a field. The value can be anything that implements `Into<Value>`.
+    pub fn field(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.fields.insert(key.into(), value.into());
+        self
+    }
+
+    /// Finish building and return the `Value::Struct`.
+    pub fn build(self) -> Value {
+        Value::Struct(self.fields)
+    }
+}
+
+impl Value {
+    /// Start building a struct value.
+    pub fn struct_builder() -> StructBuilder {
+        StructBuilder::new()
+    }
+}
+
+// ============================================================
 // IntoIterator
 // ============================================================
 
@@ -1017,6 +1058,36 @@ mod tests {
         assert!(Value::from("a") < Value::from("b"));
         // incompatible types => None
         assert_eq!(Value::int(1).partial_cmp(&Value::Bool(true)), None);
+    }
+
+    // --- StructBuilder ---
+
+    #[test]
+    fn test_struct_builder() {
+        let v = Value::struct_builder()
+            .field("name", "Alice")
+            .field("age", 30i32)
+            .field("active", true)
+            .field("scores", vec![Value::int(90), Value::int(85)])
+            .build();
+
+        assert_eq!(v.get("name"), Some(&Value::from("Alice")));
+        assert_eq!(v.get("age"), Some(&Value::int(30)));
+        assert_eq!(v.get("active"), Some(&Value::Bool(true)));
+        assert_eq!(v.get("scores").unwrap().get_index(0), Some(&Value::int(90)));
+    }
+
+    #[test]
+    fn test_struct_builder_nested() {
+        let v = Value::struct_builder()
+            .field("server", Value::struct_builder()
+                .field("host", "localhost")
+                .field("port", 8080i32)
+                .build())
+            .build();
+
+        assert_eq!(v.get_path("server.host"), Some(&Value::from("localhost")));
+        assert_eq!(v.get_path("server.port"), Some(&Value::int(8080)));
     }
 
     // --- IntoIterator ---
