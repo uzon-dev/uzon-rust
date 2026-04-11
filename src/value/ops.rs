@@ -189,6 +189,36 @@ impl Value {
         }
     }
 
+    /// Deep-merge `other` into `self`. Both must be structs.
+    ///
+    /// - Matching struct fields are merged recursively.
+    /// - Non-struct fields in `other` overwrite fields in `self`.
+    /// - Fields only in `other` are added.
+    /// - Fields only in `self` are kept.
+    ///
+    /// ```ignore
+    /// let mut base = uzon!({ "a": 1, "nested": { "x": 10, "y": 20 } });
+    /// let overlay = uzon!({ "a": 2, "nested": { "y": 99, "z": 30 } });
+    /// base.merge(overlay);
+    /// // base = { a: 2, nested: { x: 10, y: 99, z: 30 } }
+    /// ```
+    pub fn merge(&mut self, other: Value) {
+        match (self, other) {
+            (Value::Struct(base), Value::Struct(overlay)) => {
+                for (key, oval) in overlay {
+                    if let Some(bval) = base.get_mut(&key) {
+                        if matches!(bval, Value::Struct(_)) && matches!(oval, Value::Struct(_)) {
+                            bval.merge(oval);
+                            continue;
+                        }
+                    }
+                    base.insert(key, oval);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Navigate a dot-separated path into nested structs.
     ///
     /// ```ignore
@@ -1039,6 +1069,48 @@ mod tests {
         assert_eq!(v.pop(), Some(Value::int(2)));
         assert_eq!(v.pop(), Some(Value::int(1)));
         assert_eq!(v.pop(), None);
+    }
+
+    // --- Merge ---
+
+    #[test]
+    fn test_merge_simple() {
+        let mut base = uzon!({"a": 1, "b": 2});
+        let overlay = uzon!({"b": 99, "c": 3});
+        base.merge(overlay);
+        assert_eq!(base.get("a"), Some(&Value::int(1)));
+        assert_eq!(base.get("b"), Some(&Value::int(99)));
+        assert_eq!(base.get("c"), Some(&Value::int(3)));
+    }
+
+    #[test]
+    fn test_merge_deep() {
+        let mut base = uzon!({
+            "server": {
+                "host": "localhost",
+                "port": 8080
+            },
+            "debug": false
+        });
+        let overlay = uzon!({
+            "server": {
+                "port": 3000,
+                "tls": true
+            },
+            "debug": true
+        });
+        base.merge(overlay);
+        assert_eq!(base.get_path("server.host"), Some(&Value::from("localhost")));
+        assert_eq!(base.get_path("server.port"), Some(&Value::int(3000)));
+        assert_eq!(base.get_path("server.tls"), Some(&Value::Bool(true)));
+        assert_eq!(base.get("debug"), Some(&Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_merge_non_struct_noop() {
+        let mut v = Value::int(42);
+        v.merge(Value::int(99));
+        assert_eq!(v, 42); // no-op
     }
 
     // --- get ---
