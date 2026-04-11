@@ -52,6 +52,19 @@ impl Evaluator {
             }
         }
 
+        // §6.1: list type annotation `as [Type]`
+        // §3.5 rule 4: enum type-context inference via `as [EnumType]`
+        // Must run BEFORE eval_node so bare identifiers in enum lists are resolved from AST.
+        if type_expr.is_list {
+            // eval_type_annotation_list may re-evaluate from AST for enum resolution,
+            // but still needs an evaluated fallback for non-enum lists.
+            let prev_in_ta = self.in_type_annotation;
+            self.in_type_annotation = true;
+            let result = self.eval_type_annotation_list_from_ast(expr, type_expr, scope, exclude, node);
+            self.in_type_annotation = prev_in_ta;
+            return result;
+        }
+
         // §4.2: suppress default i64 range check for integer literals inside `as`
         let prev_in_ta = self.in_type_annotation;
         self.in_type_annotation = true;
@@ -65,12 +78,6 @@ impl Evaluator {
                 self.validate_type_exists(type_name, type_expr, scope, node)?;
             }
             return Ok(Value::Undefined);
-        }
-
-        // §6.1: list type annotation `as [Type]`
-        // §3.5 rule 4: enum type-context inference via `as [EnumType]`
-        if type_expr.is_list {
-            return self.eval_type_annotation_list(&mut val, expr, type_expr, scope, exclude, node);
         }
 
         // §6.3: named struct type conformance checking
@@ -110,11 +117,11 @@ impl Evaluator {
         Ok(val)
     }
 
-    /// Handles `as [Type]` list type annotation.
-    /// Includes both enum list resolution and general list type annotation.
-    fn eval_type_annotation_list(
+    /// Handles `as [Type]` list type annotation, working from AST.
+    /// For enum types, resolves bare identifiers as variants directly from AST.
+    /// For non-enum types, evaluates the expression first then validates.
+    fn eval_type_annotation_list_from_ast(
         &mut self,
-        val: &mut Value,
         expr: &Node,
         type_expr: &TypeExpr,
         scope: &mut Scope,
@@ -122,7 +129,7 @@ impl Evaluator {
         node: &Node,
     ) -> Result<Value> {
         if let Some(ref inner) = type_expr.inner {
-            // Check if inner type is a named enum — resolve list elements as variants
+            // Check if inner type is a named enum — resolve list elements as variants from AST
             let enum_info = scope.resolve_type_path(&inner.path).and_then(|td| {
                 if let TypeDefKind::Enum { variants } = td.kind {
                     Some((td.name, variants))
@@ -132,10 +139,20 @@ impl Evaluator {
                 return self.eval_list_enum_resolution(expr, &enum_name, &variants, inner, scope, exclude, node);
             }
         }
-        // Non-enum list type annotation — validate already-evaluated elements
-        if let Value::List(items) = val {
+        // Non-enum list type annotation — evaluate the expression, then validate elements
+        let mut val = self.eval_node(expr, scope, exclude)?;
+        if val.is_undefined() {
+            if let Some(type_name) = type_expr.path.last() {
+                self.validate_type_exists(type_name, type_expr, scope, node)?;
+            }
+            return Ok(Value::Undefined);
+        }
+        if let Value::List(list) = &mut val {
             if let Some(ref inner) = type_expr.inner {
-                self.validate_list_elements(items, inner, scope, node)?;
+                self.validate_list_elements(&mut list.elements, inner, scope, node)?;
+                if let Some(type_name) = inner.path.last() {
+                    list.element_type = Some(type_name.clone());
+                }
             }
         } else {
             return Err(UzonError::type_error(
@@ -143,7 +160,7 @@ impl Evaluator {
                 node.span.line, node.span.col,
             ));
         }
-        Ok(val.clone())
+        Ok(val)
     }
 
     /// Re-evaluate list elements from AST with enum variant context.
@@ -178,7 +195,7 @@ impl Evaluator {
                 }
                 resolved.push(v);
             }
-            return Ok(Value::List(resolved));
+            return Ok(Value::List(UzonList::with_type(resolved, enum_name)));
         }
         // If the expression isn't a list literal, evaluate normally
         self.eval_node(expr, scope, exclude)

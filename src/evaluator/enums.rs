@@ -8,6 +8,26 @@ use crate::error::{Result, UzonError};
 use crate::scope::{Scope, TypeDefKind};
 use crate::value::*;
 
+impl Evaluator {
+    /// Format a TypeExpr as a string for storing in tagged union variant maps.
+    pub(crate) fn format_type_expr(te: &TypeExpr) -> String {
+        if te.is_null {
+            return "null".to_string();
+        }
+        if let Some(ref tuple_types) = te.tuple_types {
+            let inner: Vec<String> = tuple_types.iter().map(Self::format_type_expr).collect();
+            return format!("({})", inner.join(", "));
+        }
+        if te.is_list {
+            if let Some(ref inner) = te.inner {
+                return format!("[{}]", Self::format_type_expr(inner));
+            }
+            return "[]".to_string();
+        }
+        te.path.join(".")
+    }
+}
+
 use super::Evaluator;
 
 impl Evaluator {
@@ -115,11 +135,7 @@ impl Evaluator {
         let variant_map: BTreeMap<String, Option<String>> = variants
             .iter()
             .map(|(name, te)| {
-                let type_name = if te.is_null {
-                    Some("null".to_string())
-                } else {
-                    Some(te.path.join("."))
-                };
+                let type_name = Some(Self::format_type_expr(te));
                 (name.clone(), type_name)
             })
             .collect();

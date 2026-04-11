@@ -113,6 +113,60 @@ impl UzonTuple {
     }
 }
 
+/// A UZON list: a homogeneous sequence with optional element type annotation (§3.4).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UzonList {
+    pub elements: Vec<Value>,
+    /// Element type stored from `as [Type]` annotations, needed for roundtripping
+    /// empty and all-null lists.
+    pub element_type: Option<String>,
+}
+
+impl UzonList {
+    pub fn new(elements: Vec<Value>) -> Self {
+        Self { elements, element_type: None }
+    }
+
+    pub fn with_type(elements: Vec<Value>, element_type: impl Into<String>) -> Self {
+        Self { elements, element_type: Some(element_type.into()) }
+    }
+}
+
+impl std::ops::Deref for UzonList {
+    type Target = Vec<Value>;
+    fn deref(&self) -> &Vec<Value> {
+        &self.elements
+    }
+}
+
+impl std::ops::DerefMut for UzonList {
+    fn deref_mut(&mut self) -> &mut Vec<Value> {
+        &mut self.elements
+    }
+}
+
+impl IntoIterator for UzonList {
+    type Item = Value;
+    type IntoIter = std::vec::IntoIter<Value>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.elements.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a UzonList {
+    type Item = &'a Value;
+    type IntoIter = std::slice::Iter<'a, Value>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.elements.iter()
+    }
+}
+
+impl FromIterator<Value> for UzonList {
+    fn from_iter<I: IntoIterator<Item = Value>>(iter: I) -> Self {
+        Self::new(iter.into_iter().collect())
+    }
+}
+
 /// A UZON function value (closure) (§3.8).
 #[derive(Debug, Clone)]
 pub struct UzonFunction {
@@ -155,7 +209,7 @@ pub enum Value {
     BigInteger(num_bigint::BigInt),
     Float(UzonFloat),
     String(String),
-    List(Vec<Value>),
+    List(UzonList),
     Tuple(UzonTuple),
     Struct(IndexMap<String, Value>),
     Enum(UzonEnum),
@@ -175,6 +229,11 @@ impl Value {
         Value::Float(UzonFloat::new(v))
     }
 
+    /// Convenience: create a list from a Vec.
+    pub fn list(items: Vec<Value>) -> Self {
+        Value::List(UzonList::new(items))
+    }
+
     pub fn is_undefined(&self) -> bool {
         matches!(self, Value::Undefined)
     }
@@ -191,10 +250,10 @@ impl Value {
             Value::TaggedUnion(tu) => tu.value.to_plain(),
             Value::Function(_) => self,
             Value::Tuple(t) => {
-                Value::List(t.elements.into_iter().map(|v| v.to_plain()).collect())
+                Value::list(t.elements.into_iter().map(|v| v.to_plain()).collect())
             }
-            Value::List(items) => {
-                Value::List(items.into_iter().map(|v| v.to_plain()).collect())
+            Value::List(list) => {
+                Value::list(list.into_iter().map(|v| v.to_plain()).collect())
             }
             Value::Struct(fields) => {
                 let mut result = IndexMap::with_capacity(fields.len());

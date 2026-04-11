@@ -29,8 +29,20 @@ impl Evaluator {
                 if let Some(val) = scope.get(name, exclude) {
                     return Ok(val.clone());
                 }
-                // Bare identifier not in scope — treat as enum variant placeholder
-                Ok(Value::String(name.clone()))
+                // Suggest correct form for case-variant typos of keywords
+                let lower = name.to_ascii_lowercase();
+                let hint = if lower != *name
+                    && (crate::token::keyword_token_type(&lower).is_some()
+                        || matches!(lower.as_str(), "lazy" | "type"))
+                {
+                    format!("; did you mean '{}'?", lower)
+                } else {
+                    String::new()
+                };
+                Err(UzonError::runtime(
+                    format!("unknown identifier '{name}'{hint}"),
+                    node.span.line, node.span.col,
+                ))
             }
             NodeKind::SelfRef => {
                 Err(UzonError::runtime("standalone 'self' is not valid; use self.name", node.span.line, node.span.col))

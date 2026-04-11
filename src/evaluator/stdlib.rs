@@ -162,7 +162,7 @@ impl Evaluator {
         match Self::unwrap_union_owned(val) {
             Value::Struct(fields) => {
                 let keys: Vec<Value> = fields.keys().map(|k| Value::String(k.clone())).collect();
-                Ok(Value::List(keys))
+                Ok(Value::list(keys))
             }
             other => Err(UzonError::type_error(
                 format!("std.keys does not support {}", other.type_name()),
@@ -333,7 +333,7 @@ impl Evaluator {
         match (Self::unwrap_union_owned(input), Self::unwrap_union_owned(delim)) {
             (Value::String(s), Value::String(d)) => {
                 let parts: Vec<Value> = s.split(&d).map(|p| Value::String(p.to_string())).collect();
-                Ok(Value::List(parts))
+                Ok(Value::list(parts))
             }
             (Value::String(_), other) => Err(UzonError::type_error(
                 format!("std.split delimiter must be string, got {}", other.type_name()),
@@ -509,7 +509,7 @@ impl Evaluator {
             let result = self.call_function(&func, vec![item], node)?;
             results.push(result);
         }
-        Ok(Value::List(results))
+        Ok(Value::list(results))
     }
 
     fn std_filter(
@@ -544,7 +544,7 @@ impl Evaluator {
                 )),
             }
         }
-        Ok(Value::List(results))
+        Ok(Value::list(results))
     }
 
     fn std_reduce(
@@ -615,7 +615,7 @@ impl Evaluator {
             ));
         }
         let mut items = match Self::unwrap_union_owned(list) {
-            Value::List(items) => items,
+            Value::List(list) => list.elements,
             other => return Err(UzonError::type_error(
                 format!("std.sort first argument must be a list, got {}", other.type_name()),
                 node.span.line, node.span.col,
@@ -644,7 +644,7 @@ impl Evaluator {
                 }
             }
         }
-        Ok(Value::List(items))
+        Ok(Value::list(items))
     }
 
     /// Helper to call a function value with given argument values.

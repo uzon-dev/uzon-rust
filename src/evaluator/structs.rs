@@ -68,7 +68,7 @@ impl Evaluator {
             }
         }
 
-        Ok(Value::List(vals))
+        Ok(Value::list(vals))
     }
 
     /// §3.2.1: type compatibility check for struct override/extension field values.
