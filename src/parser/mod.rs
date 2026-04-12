@@ -27,7 +27,7 @@
 ///  18. Undefined coalescing (`or else`)
 use crate::ast::*;
 use crate::error::{Result, UzonError};
-use crate::token::{Token, TokenType};
+use crate::token::{Token, TokenType, is_keyword};
 
 mod expressions;
 mod type_decl;
@@ -115,6 +115,16 @@ impl Parser {
         }
     }
 
+    /// Line number of the token immediately before the current position.
+    /// Used by `parse_call_or_access` to enforce the same-line rule (§5.15).
+    pub(crate) fn prev_line(&self) -> usize {
+        if self.pos > 0 {
+            self.tokens[self.pos - 1].line
+        } else {
+            0
+        }
+    }
+
     pub(crate) fn current_span(&self) -> Span {
         let tok = self.peek();
         Span {
@@ -138,11 +148,24 @@ impl Parser {
         i < self.tokens.len() && self.tokens[i].token_type == tt
     }
 
-    /// Check if position `pos` starts a new binding: identifier followed by `is` or `are`.
+    /// Check if position `pos` starts a new binding: identifier followed by
+    /// `is`, `are`, or a composite `is …` token.
     ///
     /// Uses the 2-token lookahead described in §8 to distinguish binding starts
-    /// from expression continuations across newlines.
+    /// from expression continuations across newlines.  Composite tokens
+    /// (`IsNot`, `IsNamed`, …) are included because binding decomposition (§9)
+    /// splits them into `is` + the remainder.
     pub(crate) fn is_binding_start_at(&self, pos: usize) -> bool {
+        self.is_binding_keyword_at(pos, true)
+    }
+
+    /// Like `is_binding_start_at` but only matches `is` (and its composites),
+    /// not `are`.  Per §9 the `func_binding` production is `name "is" expression`.
+    pub(crate) fn is_func_binding_start_at(&self, pos: usize) -> bool {
+        self.is_binding_keyword_at(pos, false)
+    }
+
+    fn is_binding_keyword_at(&self, pos: usize, allow_are: bool) -> bool {
         let tok = &self.tokens[pos.min(self.tokens.len() - 1)];
 
         // Must be an identifier
@@ -150,7 +173,11 @@ impl Parser {
             return false;
         }
 
-        // Look for `is` or `are` after the identifier, skipping newlines
+        // Look for `is`/`are` after the identifier, skipping newlines.
+        // Composite tokens (IsNot, IsNamed, etc.) are NOT included here —
+        // they are handled by `parse_binding` decomposition. Including them
+        // would cause `r is named error` expressions to be wrongly detected
+        // as binding starts.
         let mut next = pos + 1;
         while next < self.tokens.len() && self.tokens[next].token_type == TokenType::Newline {
             next += 1;
@@ -159,10 +186,8 @@ impl Parser {
             return false;
         }
 
-        matches!(
-            self.tokens[next].token_type,
-            TokenType::Is | TokenType::Are
-        )
+        self.tokens[next].token_type == TokenType::Is
+            || (allow_are && self.tokens[next].token_type == TokenType::Are)
     }
 
     /// Check if the current position is a trailing comma position:
@@ -248,6 +273,19 @@ impl Parser {
     }
 
     pub(crate) fn parse_binding(&mut self) -> Result<Binding> {
+        // §11.2: suggest @escape when a keyword appears at binding-name position
+        let tok = self.peek();
+        if tok.token_type != TokenType::Identifier && is_keyword(&tok.value) {
+            let kw = tok.value.clone();
+            return Err(UzonError::syntax(
+                format!(
+                    "'{kw}' is a keyword and cannot be used as a binding name; \
+                     use @{kw} to escape it"
+                ),
+                tok.line,
+                tok.col,
+            ));
+        }
         let name_tok = self.expect(TokenType::Identifier)?;
         let name = name_tok.value.clone();
         let span = Span {
@@ -286,16 +324,21 @@ impl Parser {
                     span,
                 });
             }
-            // "x is named ..." -> binding decomposition
+            // §9 binding decomposition: "x is named ..." → "named" becomes an identifier,
+            // then continue parsing from type-declaration level (e.g., `named from v1, v2`)
             TokenType::IsNamed => {
                 self.advance();
                 self.skip_newlines();
-                let expr = self.parse_expression()?;
-                let named_node = self.wrap_named(expr, tok.line, tok.col)?;
+                let ident = Node::new(
+                    NodeKind::Identifier { name: "named".to_string() },
+                    tok.line,
+                    tok.col,
+                );
+                let value = self.continue_from_type_decl(ident)?;
                 let called = self.try_parse_called()?;
                 return Ok(Binding {
                     name,
-                    value: named_node,
+                    value,
                     called,
                     is_are: false,
                     list_type_annotation: None,
@@ -304,18 +347,39 @@ impl Parser {
             }
             TokenType::IsNotNamed => {
                 self.advance();
+                return Err(UzonError::syntax(
+                    "'is not named' cannot appear at the start of a binding value",
+                    tok.line,
+                    tok.col,
+                ));
+            }
+            // §9 binding decomposition: "x is type ..." → "type" becomes an identifier
+            TokenType::IsType => {
+                self.advance();
                 self.skip_newlines();
-                let expr = self.parse_expression()?;
-                let named_node = self.wrap_not_named(expr, tok.line, tok.col)?;
+                let ident = Node::new(
+                    NodeKind::Identifier { name: "type".to_string() },
+                    tok.line,
+                    tok.col,
+                );
+                let value = self.continue_from_type_decl(ident)?;
                 let called = self.try_parse_called()?;
                 return Ok(Binding {
                     name,
-                    value: named_node,
+                    value,
                     called,
                     is_are: false,
                     list_type_annotation: None,
                     span,
                 });
+            }
+            TokenType::IsNotType => {
+                self.advance();
+                return Err(UzonError::syntax(
+                    "'is not type' cannot appear at the start of a binding value",
+                    tok.line,
+                    tok.col,
+                ));
             }
             _ => {
                 return Err(UzonError::syntax(

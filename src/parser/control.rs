@@ -193,7 +193,9 @@ impl Parser {
         let prev_suppress = self.suppress_multiline_string;
         self.suppress_multiline_string = true;
         while !self.at(TokenType::RBrace) && !self.at(TokenType::Eof) {
-            if self.is_binding_start_at(self.pos) {
+            // §9 func_binding: only `name "is" expression` — `are` is not
+            // allowed inside function bodies.
+            if self.is_func_binding_start_at(self.pos) {
                 body_bindings.push(self.parse_binding()?);
                 self.skip_separator();
             } else {

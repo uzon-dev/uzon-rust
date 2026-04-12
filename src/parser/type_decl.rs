@@ -8,6 +8,20 @@ use crate::token::{TokenType, is_keyword, is_reserved_keyword};
 use super::Parser;
 
 impl Parser {
+    /// Continue parsing from type-declaration level with an already-parsed left
+    /// expression. Used by binding decomposition when `IsNamed`/`IsType` are
+    /// decomposed into an identifier + type-declaration suffixes (§9).
+    pub(crate) fn continue_from_type_decl(&mut self, expr: Node) -> Result<Node> {
+        self.skip_newlines();
+        if self.at(TokenType::From) {
+            return self.parse_from_clause(expr);
+        }
+        if self.at(TokenType::Named) {
+            return self.parse_named_clause(expr);
+        }
+        Ok(expr)
+    }
+
     /// Level 5: `from`, `named` — type declaration (§3.5, §3.6, §3.7).
     ///
     /// Respects NEWLINE_SEP: if a newline precedes `from`/`named` and the next

@@ -393,7 +393,16 @@ impl Evaluator {
                 for _ in 0..count {
                     result.extend(items.iter().cloned());
                 }
-                Ok(Value::list(result))
+                // Preserve element_type; infer from elements if not explicit
+                // (important for count=0 to produce typed empty list)
+                let element_type = items.element_type.clone().or_else(|| {
+                    if result.is_empty() {
+                        items.iter().find(|v| !v.is_null()).map(|v| Evaluator::specific_type_name(v))
+                    } else {
+                        None
+                    }
+                });
+                Ok(Value::List(UzonList { elements: result, element_type }))
             }
             _ => Err(UzonError::type_error(
                 format!("'**' requires string or list left operand, got {}", lv.type_name()),

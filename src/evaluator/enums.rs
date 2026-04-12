@@ -47,6 +47,19 @@ impl Evaluator {
             ));
         }
 
+        // §3.5: duplicate variant names are a type error
+        {
+            let mut seen = std::collections::HashSet::new();
+            for v in variants {
+                if !seen.insert(v.as_str()) {
+                    return Err(UzonError::type_error(
+                        format!("duplicate enum variant '{v}'"),
+                        node.span.line, node.span.col,
+                    ));
+                }
+            }
+        }
+
         let variant_name = match &value.kind {
             NodeKind::Identifier { name } => name.clone(),
             _ => {
@@ -83,6 +96,21 @@ impl Evaluator {
                 node.span.line, node.span.col,
             ));
         }
+
+        // §3.6: duplicate member types are a type error
+        {
+            let mut seen = std::collections::HashSet::new();
+            for t in types {
+                let name = t.path.join(".");
+                if !seen.insert(name.clone()) {
+                    return Err(UzonError::type_error(
+                        format!("duplicate union member type '{name}'"),
+                        node.span.line, node.span.col,
+                    ));
+                }
+            }
+        }
+
         let mut val = self.eval_node(value, scope, exclude)?;
         let type_names: Vec<String> = types.iter().map(|t| t.path.join(".")).collect();
 
@@ -157,6 +185,19 @@ impl Evaluator {
                     return Ok(Value::TaggedUnion(UzonTaggedUnion::new(
                         val, tag, tv, Some(type_name),
                     )));
+                }
+            }
+        }
+
+        // §3.7: duplicate variant names are a type error
+        {
+            let mut seen = std::collections::HashSet::new();
+            for (name, _) in variants {
+                if !seen.insert(name.as_str()) {
+                    return Err(UzonError::type_error(
+                        format!("duplicate tagged union variant '{name}'"),
+                        node.span.line, node.span.col,
+                    ));
                 }
             }
         }
