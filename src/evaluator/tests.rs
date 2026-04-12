@@ -443,15 +443,48 @@ fn test_case_type_fallthrough() {
 }
 
 #[test]
-fn test_case_type_non_union_error() {
+fn test_case_type_non_union_dispatch() {
     let src = r#"
         x is 42
         result is case type x
             when i64 then "integer"
             else "other"
     "#;
-    let err = eval_err(src);
-    assert!(err.to_string().contains("untagged union"));
+    let result = eval(src).unwrap();
+    assert_eq!(result["result"], Value::String("integer".into()));
+}
+
+#[test]
+fn test_case_type_branch_narrowing() {
+    // §5.10: inside a when branch, the scrutinee is narrowed to the inner value.
+    // `u` is a union(i32), but inside `when i32`, `u` is narrowed to plain i32.
+    // The `when string` branch uses `u ++ "!"` which would fail on union(i32),
+    // but narrowing means we skip speculative evaluation of non-selected branches.
+    let src = r#"
+        u is 42 from union i32, string
+        msg is case type u
+            when i32 then "got {u}"
+            when string then u ++ "!"
+            else "other"
+    "#;
+    let result = eval(src).unwrap();
+    assert_eq!(result["msg"], Value::String("got 42".into()));
+}
+
+#[test]
+fn test_case_type_narrowing_tagged_union() {
+    // §3.7.1/§3.7.2: inside case type when, tagged union scrutinee is narrowed
+    // to its inner value. Binding preserves the wrapper in general, but narrowing
+    // extracts the inner value for the matched branch.
+    let src = r#"
+        tu is 42 as i32 named n from n as i32, f as f64 called Num
+        result is case type tu
+            when i32 then tu + 1
+            else 0
+    "#;
+    let result = eval(src).unwrap();
+    // tu is narrowed from TaggedUnion(42 as i32) to plain 42 as i32
+    assert_eq!(result["result"], Value::int(43));
 }
 
 #[test]

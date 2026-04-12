@@ -110,11 +110,14 @@ impl Evaluator {
             return Ok(());
         }
         if a.type_name() != b.type_name() {
-            return Err(UzonError::type_error(
-                format!("branches must return the same type, got {} and {}",
-                    a.type_name(), b.type_name()),
-                node.span.line, node.span.col,
-            ));
+            // §5 line 1220: cross-category int→float adoption
+            if !can_adopt_cross_category(a, b) {
+                return Err(UzonError::type_error(
+                    format!("branches must return the same type, got {} and {}",
+                        a.type_name(), b.type_name()),
+                    node.span.line, node.span.col,
+                ));
+            }
         }
         // D.3: exact numeric type_ann must be compatible
         match (a, b) {
@@ -342,6 +345,47 @@ impl Evaluator {
         }
     }
 
+    /// §5.10/§D.5: Create a zero-value for a given type name for speculative evaluation
+    /// in narrowed scope. If the type matches the actual narrowed value, use that; otherwise
+    /// create a representative value for the type.
+    pub(crate) fn create_narrowed_value_for_type(&self, type_name: &str, actual: &Value) -> Value {
+        // If the actual value already matches this type, use it directly
+        if Self::specific_type_name(actual) == type_name {
+            return actual.clone();
+        }
+        // Create a zero-value for the requested type
+        match type_name {
+            "bool" => Value::Bool(false),
+            "string" => Value::String(String::new()),
+            "null" => Value::Null,
+            _ if IntegerType::from_type_name(type_name).is_some() => {
+                let it = IntegerType::from_type_name(type_name).unwrap();
+                Value::Integer(UzonInteger::with_type(0, it))
+            }
+            _ if FloatType::from_type_name(type_name).is_some() => {
+                let ft = FloatType::from_type_name(type_name).unwrap();
+                Value::Float(UzonFloat::with_type(0.0, ft))
+            }
+            _ => actual.clone(), // fallback: use the actual value
+        }
+    }
+
+    /// §5.10: Create a narrowed value for a named variant in speculative eval.
+    /// Uses the variant's declared inner type to create a representative value.
+    pub(crate) fn create_narrowed_value_for_variant(
+        &self,
+        variant_name: &str,
+        variants: &BTreeMap<String, Option<String>>,
+        actual: &Value,
+    ) -> Value {
+        if let Some(Some(type_name)) = variants.get(variant_name) {
+            self.create_narrowed_value_for_type(type_name, actual)
+        } else {
+            // Variant with no declared type — use null as representative
+            Value::Null
+        }
+    }
+
     pub(crate) fn assert_bool(&self, val: &Value, node: &Node) -> Result<()> {
         if !matches!(val, Value::Bool(_)) {
             Err(UzonError::type_error(
@@ -414,6 +458,16 @@ pub(crate) fn check_structural_compatibility(a: &Value, b: &Value, node: &Node) 
     Ok(())
 }
 
+/// §5 line 1220: cross-category int→float adoption check.
+/// Returns true if one operand is an adoptable integer literal and the other is a float.
+pub fn can_adopt_cross_category(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Integer(i), Value::Float(_)) => !i.explicit,
+        (Value::Float(_), Value::Integer(i)) => !i.explicit,
+        _ => false,
+    }
+}
+
 /// Deep structural equality comparison for UZON values.
 pub fn values_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
@@ -458,6 +512,13 @@ pub fn values_equal(a: &Value, b: &Value) -> bool {
         }
         (Value::Union(a), Value::Union(b)) => {
             values_equal(&a.value, &b.value)
+        }
+        // §5 line 1220: cross-category int→float adoption for equality
+        (Value::Integer(a), Value::Float(b)) if !a.explicit => {
+            !b.value.is_nan() && (a.value as f64) == b.value
+        }
+        (Value::Float(a), Value::Integer(b)) if !b.explicit => {
+            !a.value.is_nan() && a.value == (b.value as f64)
         }
         _ => false,
     }

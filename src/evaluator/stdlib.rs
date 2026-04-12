@@ -47,6 +47,25 @@ impl Evaluator {
 
     // === Individual stdlib functions ===
 
+    /// §D.2: evaluate a std function argument, returning RuntimeError for undefined.
+    fn eval_std_arg(
+        &mut self,
+        arg: &Node,
+        func_name: &str,
+        scope: &mut Scope,
+        exclude: Option<&str>,
+        node: &Node,
+    ) -> Result<Value> {
+        let val = self.eval_node(arg, scope, exclude)?;
+        if val.is_undefined() {
+            return Err(UzonError::runtime(
+                format!("std.{func_name} received undefined argument"),
+                node.span.line, node.span.col,
+            ));
+        }
+        Ok(val)
+    }
+
     fn std_len(
         &mut self,
         args: &[Node],
@@ -57,7 +76,7 @@ impl Evaluator {
         if args.len() != 1 {
             return Err(UzonError::runtime("std.len requires exactly 1 argument", node.span.line, node.span.col));
         }
-        let val = self.eval_node(&args[0], scope, exclude)?;
+        let val = self.eval_std_arg(&args[0], "len", scope, exclude, node)?;
         match Self::unwrap_union_owned(val) {
             Value::List(items) => Ok(Value::int(items.len() as i128)),
             Value::Tuple(t) => Ok(Value::int(t.len() as i128)),
@@ -80,8 +99,8 @@ impl Evaluator {
         if args.len() != 2 {
             return Err(UzonError::runtime("std.has requires exactly 2 arguments", node.span.line, node.span.col));
         }
-        let collection = self.eval_node(&args[0], scope, exclude)?;
-        let key = self.eval_node(&args[1], scope, exclude)?;
+        let collection = self.eval_std_arg(&args[0], "has", scope, exclude, node)?;
+        let key = self.eval_std_arg(&args[1], "has", scope, exclude, node)?;
         match Self::unwrap_union_owned(collection) {
             Value::Struct(fields) => {
                 match key {
@@ -127,8 +146,8 @@ impl Evaluator {
         if args.len() != 2 {
             return Err(UzonError::runtime("std.get requires exactly 2 arguments", node.span.line, node.span.col));
         }
-        let collection = self.eval_node(&args[0], scope, exclude)?;
-        let key = self.eval_node(&args[1], scope, exclude)?;
+        let collection = self.eval_std_arg(&args[0], "get", scope, exclude, node)?;
+        let key = self.eval_std_arg(&args[1], "get", scope, exclude, node)?;
         match (Self::unwrap_union_owned(collection), key) {
             (Value::Struct(fields), Value::String(k)) => {
                 Ok(fields.get(&k).cloned().unwrap_or(Value::Undefined))
@@ -158,7 +177,7 @@ impl Evaluator {
         if args.len() != 1 {
             return Err(UzonError::runtime("std.keys requires exactly 1 argument", node.span.line, node.span.col));
         }
-        let val = self.eval_node(&args[0], scope, exclude)?;
+        let val = self.eval_std_arg(&args[0], "keys", scope, exclude, node)?;
         match Self::unwrap_union_owned(val) {
             Value::Struct(fields) => {
                 let keys: Vec<Value> = fields.keys().map(|k| Value::String(k.clone())).collect();
@@ -182,7 +201,7 @@ impl Evaluator {
         if args.len() != 1 {
             return Err(UzonError::runtime("std.values requires exactly 1 argument", node.span.line, node.span.col));
         }
-        let val = self.eval_node(&args[0], scope, exclude)?;
+        let val = self.eval_std_arg(&args[0], "values", scope, exclude, node)?;
         match Self::unwrap_union_owned(val) {
             Value::Struct(fields) => {
                 let vals: Vec<Value> = fields.into_values().collect();
@@ -205,8 +224,8 @@ impl Evaluator {
         if args.len() != 2 {
             return Err(UzonError::runtime("std.map requires exactly 2 arguments", node.span.line, node.span.col));
         }
-        let list = self.eval_node(&args[0], scope, exclude)?;
-        let func_val = self.eval_node(&args[1], scope, exclude)?;
+        let list = self.eval_std_arg(&args[0], "map", scope, exclude, node)?;
+        let func_val = self.eval_std_arg(&args[1], "map", scope, exclude, node)?;
         self.std_map(list, func_val, node)
     }
 
@@ -220,8 +239,8 @@ impl Evaluator {
         if args.len() != 2 {
             return Err(UzonError::runtime("std.filter requires exactly 2 arguments", node.span.line, node.span.col));
         }
-        let list = self.eval_node(&args[0], scope, exclude)?;
-        let func_val = self.eval_node(&args[1], scope, exclude)?;
+        let list = self.eval_std_arg(&args[0], "filter", scope, exclude, node)?;
+        let func_val = self.eval_std_arg(&args[1], "filter", scope, exclude, node)?;
         self.std_filter(list, func_val, node)
     }
 
@@ -235,9 +254,9 @@ impl Evaluator {
         if args.len() != 3 {
             return Err(UzonError::runtime("std.reduce requires exactly 3 arguments", node.span.line, node.span.col));
         }
-        let list = self.eval_node(&args[0], scope, exclude)?;
-        let initial = self.eval_node(&args[1], scope, exclude)?;
-        let func_val = self.eval_node(&args[2], scope, exclude)?;
+        let list = self.eval_std_arg(&args[0], "reduce", scope, exclude, node)?;
+        let initial = self.eval_std_arg(&args[1], "reduce", scope, exclude, node)?;
+        let func_val = self.eval_std_arg(&args[2], "reduce", scope, exclude, node)?;
         self.std_reduce(list, initial, func_val, node)
     }
 
@@ -251,8 +270,8 @@ impl Evaluator {
         if args.len() != 2 {
             return Err(UzonError::runtime("std.sort requires exactly 2 arguments", node.span.line, node.span.col));
         }
-        let list = self.eval_node(&args[0], scope, exclude)?;
-        let func_val = self.eval_node(&args[1], scope, exclude)?;
+        let list = self.eval_std_arg(&args[0], "sort", scope, exclude, node)?;
+        let func_val = self.eval_std_arg(&args[1], "sort", scope, exclude, node)?;
         self.std_sort(list, func_val, node)
     }
 
@@ -266,7 +285,7 @@ impl Evaluator {
         if args.len() != 1 {
             return Err(UzonError::runtime("std.isNan requires exactly 1 argument", node.span.line, node.span.col));
         }
-        let val = self.eval_node(&args[0], scope, exclude)?;
+        let val = self.eval_std_arg(&args[0], "isNan", scope, exclude, node)?;
         match Self::unwrap_union_owned(val) {
             Value::Float(f) => Ok(Value::Bool(f.value.is_nan())),
             other => Err(UzonError::type_error(
@@ -286,7 +305,7 @@ impl Evaluator {
         if args.len() != 1 {
             return Err(UzonError::runtime("std.isInf requires exactly 1 argument", node.span.line, node.span.col));
         }
-        let val = self.eval_node(&args[0], scope, exclude)?;
+        let val = self.eval_std_arg(&args[0], "isInf", scope, exclude, node)?;
         match Self::unwrap_union_owned(val) {
             Value::Float(f) => Ok(Value::Bool(f.value.is_infinite())),
             other => Err(UzonError::type_error(
@@ -306,7 +325,7 @@ impl Evaluator {
         if args.len() != 1 {
             return Err(UzonError::runtime("std.isFinite requires exactly 1 argument", node.span.line, node.span.col));
         }
-        let val = self.eval_node(&args[0], scope, exclude)?;
+        let val = self.eval_std_arg(&args[0], "isFinite", scope, exclude, node)?;
         match Self::unwrap_union_owned(val) {
             Value::Float(f) => Ok(Value::Bool(f.value.is_finite())),
             other => Err(UzonError::type_error(
@@ -328,8 +347,8 @@ impl Evaluator {
         if args.len() != 2 {
             return Err(UzonError::runtime("std.split requires exactly 2 arguments", node.span.line, node.span.col));
         }
-        let input = self.eval_node(&args[0], scope, exclude)?;
-        let delim = self.eval_node(&args[1], scope, exclude)?;
+        let input = self.eval_std_arg(&args[0], "split", scope, exclude, node)?;
+        let delim = self.eval_std_arg(&args[1], "split", scope, exclude, node)?;
         match (Self::unwrap_union_owned(input), Self::unwrap_union_owned(delim)) {
             (Value::String(s), Value::String(d)) => {
                 // §5.16.4: rules checked in order — first match wins.
@@ -366,7 +385,7 @@ impl Evaluator {
         if args.len() != 1 {
             return Err(UzonError::runtime("std.trim requires exactly 1 argument", node.span.line, node.span.col));
         }
-        let val = self.eval_node(&args[0], scope, exclude)?;
+        let val = self.eval_std_arg(&args[0], "trim", scope, exclude, node)?;
         match Self::unwrap_union_owned(val) {
             Value::String(s) => Ok(Value::String(s.trim().to_string())),
             other => Err(UzonError::type_error(
@@ -386,9 +405,9 @@ impl Evaluator {
         if args.len() != 3 {
             return Err(UzonError::runtime("std.replace requires exactly 3 arguments", node.span.line, node.span.col));
         }
-        let input = self.eval_node(&args[0], scope, exclude)?;
-        let target = self.eval_node(&args[1], scope, exclude)?;
-        let replacement = self.eval_node(&args[2], scope, exclude)?;
+        let input = self.eval_std_arg(&args[0], "replace", scope, exclude, node)?;
+        let target = self.eval_std_arg(&args[1], "replace", scope, exclude, node)?;
+        let replacement = self.eval_std_arg(&args[2], "replace", scope, exclude, node)?;
         match (Self::unwrap_union_owned(input), Self::unwrap_union_owned(target), Self::unwrap_union_owned(replacement)) {
             (Value::String(s), Value::String(t), Value::String(r)) => {
                 if t.is_empty() {
@@ -422,7 +441,7 @@ impl Evaluator {
         if args.len() != 1 {
             return Err(UzonError::runtime("std.lower requires exactly 1 argument", node.span.line, node.span.col));
         }
-        let val = self.eval_node(&args[0], scope, exclude)?;
+        let val = self.eval_std_arg(&args[0], "lower", scope, exclude, node)?;
         match Self::unwrap_union_owned(val) {
             Value::String(s) => Ok(Value::String(s.to_lowercase())),
             other => Err(UzonError::type_error(
@@ -442,7 +461,7 @@ impl Evaluator {
         if args.len() != 1 {
             return Err(UzonError::runtime("std.upper requires exactly 1 argument", node.span.line, node.span.col));
         }
-        let val = self.eval_node(&args[0], scope, exclude)?;
+        let val = self.eval_std_arg(&args[0], "upper", scope, exclude, node)?;
         match Self::unwrap_union_owned(val) {
             Value::String(s) => Ok(Value::String(s.to_uppercase())),
             other => Err(UzonError::type_error(
@@ -462,8 +481,8 @@ impl Evaluator {
         if args.len() != 2 {
             return Err(UzonError::runtime("std.join requires exactly 2 arguments", node.span.line, node.span.col));
         }
-        let list_val = self.eval_node(&args[0], scope, exclude)?;
-        let sep_val = self.eval_node(&args[1], scope, exclude)?;
+        let list_val = self.eval_std_arg(&args[0], "join", scope, exclude, node)?;
+        let sep_val = self.eval_std_arg(&args[1], "join", scope, exclude, node)?;
         let sep = match Self::unwrap_union_owned(sep_val) {
             Value::String(s) => s,
             other => return Err(UzonError::type_error(
@@ -631,8 +650,10 @@ impl Evaluator {
                 node.span.line, node.span.col,
             )),
         };
-        // Stable insertion sort — call_function requires &mut self,
-        // so we can't use sort_by with a closure.
+        // §5.16.2: Stable insertion sort with strict weak ordering.
+        // Equality: both comp(a,b) and comp(b,a) return false.
+        // Insertion sort is inherently stable — equal elements preserve
+        // original order without explicit both-direction checking.
         for i in 1..items.len() {
             let mut j = i;
             while j > 0 {
@@ -683,7 +704,16 @@ impl Evaluator {
                     node.span.line, node.span.col,
                 ));
             };
+            // §D.2: undefined as argument is a runtime error
+            if val.is_undefined() {
+                return Err(UzonError::runtime(
+                    "undefined cannot be passed as a function argument",
+                    node.span.line, node.span.col,
+                ));
+            }
             if let Some(type_name) = param.type_expr.path.last() {
+                // §3.8: validate type before coercion
+                self.check_type_assertion(&val, type_name, node)?;
                 val = Self::coerce_to_param_type(val, type_name);
             }
             func_scope.define(param.name.clone(), val);
@@ -697,8 +727,10 @@ impl Evaluator {
 
         self.in_function_body = prev_in_function_body;
 
-        // Bug fix absorbed: check return type name for named struct types (§6.3)
+        // §3.8: check return type assertion
         if let Some(return_type_name) = func.return_type.path.last() {
+            self.check_type_assertion(&result, return_type_name, node)?;
+            // §6.3: check return type name for named struct types
             if let Some(typedef) = func_scope.resolve_type_path(&func.return_type.path) {
                 if let TypeDefKind::Struct { .. } = &typedef.kind {
                     if let Value::Struct(_) = &result {

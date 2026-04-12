@@ -6,7 +6,7 @@ use crate::error::{Result, UzonError};
 use crate::scope::Scope;
 use crate::value::*;
 
-use super::{Evaluator, values_equal, check_structural_compatibility};
+use super::{Evaluator, values_equal, check_structural_compatibility, can_adopt_cross_category};
 
 impl Evaluator {
     pub(crate) fn eval_binary_op(
@@ -78,10 +78,14 @@ impl Evaluator {
         }
         match lv {
             Value::Bool(false) => {
-                // §5.9: speculatively evaluate right side for type check
-                if let Ok(rv) = self.eval_node(right, scope, exclude) {
-                    let rv = Self::unwrap_union_owned(rv);
-                    self.assert_bool(&rv, node)?;
+                // §5.9/§D.5: speculatively evaluate right side — suppress RuntimeError only
+                match self.eval_node(right, scope, exclude) {
+                    Ok(rv) => {
+                        let rv = Self::unwrap_union_owned(rv);
+                        self.assert_bool(&rv, node)?;
+                    }
+                    Err(e) if e.is_runtime() => {}
+                    Err(e) => return Err(e),
                 }
                 Ok(Value::Bool(false))
             }
@@ -105,9 +109,14 @@ impl Evaluator {
         }
         match lv {
             Value::Bool(true) => {
-                if let Ok(rv) = self.eval_node(right, scope, exclude) {
-                    let rv = Self::unwrap_union_owned(rv);
-                    self.assert_bool(&rv, node)?;
+                // §5.9/§D.5: speculatively evaluate right side — suppress RuntimeError only
+                match self.eval_node(right, scope, exclude) {
+                    Ok(rv) => {
+                        let rv = Self::unwrap_union_owned(rv);
+                        self.assert_bool(&rv, node)?;
+                    }
+                    Err(e) if e.is_runtime() => {}
+                    Err(e) => return Err(e),
                 }
                 Ok(Value::Bool(true))
             }
@@ -164,7 +173,7 @@ impl Evaluator {
         let rv = if matches!(&rv, Value::Union(_)) { Self::unwrap_union_owned(rv) } else { rv };
 
         if !lv.is_null() && !lv.is_undefined() && !rv.is_null() && !rv.is_undefined() {
-            if lv.type_name() != rv.type_name() {
+            if lv.type_name() != rv.type_name() && !can_adopt_cross_category(&lv, &rv) {
                 return Err(UzonError::type_error(
                     format!("'is'/'is not' requires same type, got {} and {}", lv.type_name(), rv.type_name()),
                     node.span.line, node.span.col,
@@ -478,6 +487,9 @@ impl Evaluator {
                 })?;
                 Ok(())
             }
+            // §5 line 1220: cross-category int→float adoption
+            (Value::Integer(i), Value::Float(_)) if !i.explicit => Ok(()),
+            (Value::Float(_), Value::Integer(i)) if !i.explicit => Ok(()),
             _ => Ok(()),
         }
     }
@@ -492,6 +504,15 @@ impl Evaluator {
         match (lv, rv) {
             (Value::Integer(a), Value::Integer(b)) => self.int_arithmetic(op, a, b, node),
             (Value::Float(a), Value::Float(b)) => self.float_arithmetic(op, a, b, node),
+            // §5 line 1220: cross-category int→float adoption
+            (Value::Integer(a), Value::Float(b)) if !a.explicit => {
+                let promoted = UzonFloat { value: a.value as f64, type_ann: b.type_ann, explicit: false };
+                self.float_arithmetic(op, &promoted, b, node)
+            }
+            (Value::Float(a), Value::Integer(b)) if !b.explicit => {
+                let promoted = UzonFloat { value: b.value as f64, type_ann: a.type_ann, explicit: false };
+                self.float_arithmetic(op, a, &promoted, node)
+            }
             (Value::BigInteger(_), _) | (_, Value::BigInteger(_)) => Err(UzonError::runtime(
                 "arithmetic on integers beyond i128 range is not supported; use 'as i128' or narrower types",
                 node.span.line, node.span.col,
@@ -563,10 +584,43 @@ impl Evaluator {
                 };
                 Ok(Value::Bool(r))
             }
-            _ => Err(UzonError::type_error(
-                format!("comparison requires same type, got {} and {}", lv.type_name(), rv.type_name()),
-                node.span.line, node.span.col,
-            )),
+            // §5 line 1220: cross-category int→float adoption for comparison
+            (Value::Integer(a), Value::Float(b)) if !a.explicit => {
+                let promoted = a.value as f64;
+                let r = match op {
+                    BinaryOp::Lt => promoted < b.value,
+                    BinaryOp::Le => promoted <= b.value,
+                    BinaryOp::Gt => promoted > b.value,
+                    BinaryOp::Ge => promoted >= b.value,
+                    _ => unreachable!(),
+                };
+                Ok(Value::Bool(r))
+            }
+            (Value::Float(a), Value::Integer(b)) if !b.explicit => {
+                let promoted = b.value as f64;
+                let r = match op {
+                    BinaryOp::Lt => a.value < promoted,
+                    BinaryOp::Le => a.value <= promoted,
+                    BinaryOp::Gt => a.value > promoted,
+                    BinaryOp::Ge => a.value >= promoted,
+                    _ => unreachable!(),
+                };
+                Ok(Value::Bool(r))
+            }
+            _ => {
+                // §5.4: distinguish "different types" from "type doesn't support ordering"
+                if lv.type_name() == rv.type_name() {
+                    Err(UzonError::type_error(
+                        format!("ordered comparison not supported for {}", lv.type_name()),
+                        node.span.line, node.span.col,
+                    ))
+                } else {
+                    Err(UzonError::type_error(
+                        format!("comparison requires same type, got {} and {}", lv.type_name(), rv.type_name()),
+                        node.span.line, node.span.col,
+                    ))
+                }
+            }
         }
     }
 
@@ -577,17 +631,26 @@ impl Evaluator {
         let val = self.eval_node(operand, scope, exclude)?;
         let val = Self::unwrap_union_owned(val);
         match op {
-            UnaryOp::Neg => match val {
-                Value::Integer(n) => {
-                    n.checked_neg().map(Value::Integer)
-                        .map_err(|msg| UzonError::runtime(msg, node.span.line, node.span.col))
+            UnaryOp::Neg => {
+                // §3.1: undefined in arithmetic is a runtime error
+                if val.is_undefined() {
+                    return Err(UzonError::runtime(
+                        "unary '-' requires numeric operand, got undefined",
+                        node.span.line, node.span.col,
+                    ));
                 }
-                Value::Float(f) => Ok(Value::Float(f.neg())),
-                _ => Err(UzonError::type_error(
-                    format!("unary '-' requires numeric operand, got {}", val.type_name()),
-                    node.span.line, node.span.col,
-                )),
-            },
+                match val {
+                    Value::Integer(n) => {
+                        n.checked_neg().map(Value::Integer)
+                            .map_err(|msg| UzonError::runtime(msg, node.span.line, node.span.col))
+                    }
+                    Value::Float(f) => Ok(Value::Float(f.neg())),
+                    _ => Err(UzonError::type_error(
+                        format!("unary '-' requires numeric operand, got {}", val.type_name()),
+                        node.span.line, node.span.col,
+                    )),
+                }
+            }
             UnaryOp::Not => {
                 // §3.1: undefined in logical operators is a runtime error
                 if val.is_undefined() {

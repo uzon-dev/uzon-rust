@@ -89,6 +89,11 @@ impl UzonError {
         }
     }
 
+    /// Returns true if this is a RuntimeError (suppressed in speculative eval per §D.5).
+    pub fn is_runtime(&self) -> bool {
+        matches!(self, UzonError::Runtime { .. })
+    }
+
     /// Attach a filename to the error's location (for imported file errors, §7).
     pub fn with_filename(mut self, filename: String) -> Self {
         let loc = match &mut self {
