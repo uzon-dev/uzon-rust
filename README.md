@@ -21,7 +21,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-uzon = "0.6"
+uzon = "0.7"
 ```
 
 ## Table of Contents
@@ -113,20 +113,35 @@ total is age + 1
 greeting is "Hello, {name}!"
 grade is if score >= 90.0 then "A" else "B"
 
-// Case expression
+// Case expressions — three modes
 label is case grade
     when "A" then "excellent"
     when "B" then "good"
     else "ok"
 
+// Type dispatch (untagged unions)
+u is 42 as i32 from union i32, string
+type_label is case type u
+    when i32 then "integer"
+    when string then "text"
+    else "other"
+
+// Variant dispatch (tagged unions)
+status is "ok" named success
+    from success as string, error as string
+    called Result
+status_label is case named status
+    when success then "good"
+    when error then "bad"
+    else "unknown"
+
 // Enums
 _color is red from red, green, blue called Color
 selected is green as Color
 
-// Tagged unions
-result is "ok" named success
-    from success as string, failure as string
-    called Result
+// Type checking
+is_int is u is type i32              // true
+is_str is u is not type string       // false
 
 // Functions
 add is function a as i32, b as i32 returns i32 { a + b }
@@ -138,7 +153,7 @@ count is std.len(tags)
 
 // Struct operations
 modified is server with { port is 443 }
-extended is server extends { tls is true, cert is "/path" }
+extended is server plus { tls is true, cert is "/path" }
 
 // Environment variables
 port is env.PORT to u16 or else 8080
@@ -206,7 +221,7 @@ let mut evaluator = Evaluator::new(options);
 
 | Field      | Type                              | Default | Description                                            |
 |------------|-----------------------------------|---------|--------------------------------------------------------|
-| `filename` | `Option<PathBuf>`                 | `None`  | Source filename for error reporting                    |
+| `filename` | `Option<PathBuf>`                 | `None`  | Source filename for error reporting                     |
 | `env`      | `Option<HashMap<String, String>>` | `None`  | Environment variables (defaults to `std::env::vars()`) |
 | `plain`    | `bool`                            | `false` | If `true`, auto-calls `to_plain()` on results          |
 
@@ -336,8 +351,8 @@ pub struct UzonTuple {
 | Method     | Signature                              | Description    |
 |------------|----------------------------------------|----------------|
 | `new`      | `fn new(elements: Vec<Value>) -> Self` | Create tuple   |
-| `len`      | `fn len(&self) -> usize`               | Element count  |
-| `is_empty` | `fn is_empty(&self) -> bool`           | Check if empty |
+| `len`      | `fn len(&self) -> usize`              | Element count  |
+| `is_empty` | `fn is_empty(&self) -> bool`          | Check if empty |
 
 #### UzonEnum
 
@@ -372,8 +387,8 @@ pub struct UzonUnion {
 ```rust
 pub struct UzonTaggedUnion {
     pub value: Box<Value>,
-    pub tag: String,                              // selected variant tag
-    pub variants: BTreeMap<String, Option<String>>, // tag → type mapping
+    pub tag: String,                               // selected variant tag
+    pub variants: BTreeMap<String, Option<String>>, // tag -> type mapping
     pub type_name: Option<String>,
 }
 ```
@@ -415,11 +430,11 @@ Value::list(vec![Value::int(1)])   // List from Vec
 #### Type introspection
 
 ```rust
-value.type_name()    // → "null", "bool", "integer", "float", "string",
-                     //   "list", "tuple", "struct", "enum", "union",
-                     //   "tagged union", "function"
-value.is_null()      // → true for Value::Null
-value.is_undefined() // → true for Value::Undefined
+value.type_name()    // -> "null", "bool", "integer", "float", "string",
+                     //    "list", "tuple", "struct", "enum", "union",
+                     //    "tagged union", "function"
+value.is_null()      // -> true for Value::Null
+value.is_undefined() // -> true for Value::Undefined
 ```
 
 #### to_plain
@@ -428,10 +443,10 @@ Strip UZON-specific wrappers for simpler Rust consumption:
 
 ```rust
 let plain = value.to_plain();
-// Enum → String
-// Tuple → List
-// Union → inner value
-// TaggedUnion → inner value
+// Enum -> String
+// Tuple -> List
+// Union -> inner value
+// TaggedUnion -> inner value
 // Struct fields and List elements are recursively simplified
 ```
 
@@ -442,19 +457,19 @@ let plain = value.to_plain();
 Type-safe extraction methods. All return `Option` — `None` if the type doesn't match.
 
 ```rust
-value.as_bool()       // → Option<bool>
-value.as_i64()        // → Option<i64>       (also handles BigInteger)
-value.as_i128()       // → Option<i128>      (also handles BigInteger)
-value.as_f64()        // → Option<f64>       (also handles Integer → f64)
-value.as_str()        // → Option<&str>
-value.as_list()       // → Option<&[Value]>
-value.as_list_mut()   // → Option<&mut Vec<Value>>
-value.as_tuple()      // → Option<&[Value]>
-value.as_tuple_mut()  // → Option<&mut Vec<Value>>
-value.as_struct()     // → Option<&IndexMap<String, Value>>
-value.as_struct_mut() // → Option<&mut IndexMap<String, Value>>
-value.as_integer()    // → Option<&UzonInteger>
-value.as_float()      // → Option<&UzonFloat>
+value.as_bool()       // -> Option<bool>
+value.as_i64()        // -> Option<i64>       (also handles BigInteger)
+value.as_i128()       // -> Option<i128>      (also handles BigInteger)
+value.as_f64()        // -> Option<f64>       (also handles Integer -> f64)
+value.as_str()        // -> Option<&str>
+value.as_list()       // -> Option<&[Value]>
+value.as_list_mut()   // -> Option<&mut Vec<Value>>
+value.as_tuple()      // -> Option<&[Value]>
+value.as_tuple_mut()  // -> Option<&mut Vec<Value>>
+value.as_struct()     // -> Option<&IndexMap<String, Value>>
+value.as_struct_mut() // -> Option<&mut IndexMap<String, Value>>
+value.as_integer()    // -> Option<&UzonInteger>
+value.as_float()      // -> Option<&UzonFloat>
 ```
 
 ```rust
@@ -462,7 +477,7 @@ let bindings = from_str(r#"name is "Alice"  age is 30"#).unwrap();
 assert_eq!(bindings["name"].as_str(), Some("Alice"));
 assert_eq!(bindings["age"].as_i64(), Some(30));
 assert_eq!(bindings["age"].as_f64(), Some(30.0));  // auto-converts
-assert_eq!(bindings["name"].as_i64(), None);        // type mismatch → None
+assert_eq!(bindings["name"].as_i64(), None);        // type mismatch -> None
 ```
 
 ---
@@ -473,10 +488,10 @@ Bracket indexing for convenient access. Returns `&Value::Null` for missing keys 
 
 ```rust
 // Struct: value["key"]
-let name = &value["name"];      // → &Value::String("Alice") or &Value::Null
+let name = &value["name"];      // -> &Value::String("Alice") or &Value::Null
 
 // List/Tuple: value[index]
-let first = &value[0];          // → &Value or &Value::Null
+let first = &value[0];          // -> &Value or &Value::Null
 
 // Chained indexing
 let host = &config["server"]["host"];
@@ -499,10 +514,10 @@ assert_eq!(config["tags"][99], Value::Null);  // no panic
 Return `Option<&Value>` instead of `&Value::Null`:
 
 ```rust
-value.get("key")           // → Option<&Value>       (structs)
-value.get_index(0)         // → Option<&Value>       (lists/tuples)
-value.get_mut("key")       // → Option<&mut Value>   (structs)
-value.get_index_mut(0)     // → Option<&mut Value>   (lists/tuples)
+value.get("key")           // -> Option<&Value>       (structs)
+value.get_index(0)         // -> Option<&Value>       (lists/tuples)
+value.get_mut("key")       // -> Option<&mut Value>   (structs)
+value.get_index_mut(0)     // -> Option<&mut Value>   (lists/tuples)
 ```
 
 ---
@@ -746,11 +761,11 @@ Standard Rust operators between `Value` instances:
 Mixed `Integer + Float` promotes to `Float`.
 
 ```rust
-Value::int(10) + Value::int(3)      // → int(13)
-Value::float(1.5) + Value::float(2) // → float(3.5)
-Value::int(5) + Value::float(0.5)   // → float(5.5)
-Value::from("he") + Value::from("llo") // → "hello"
--Value::int(42)                      // → int(-42)
+Value::int(10) + Value::int(3)      // -> int(13)
+Value::float(1.5) + Value::float(2) // -> float(3.5)
+Value::int(5) + Value::float(0.5)   // -> float(5.5)
+Value::from("he") + Value::from("llo") // -> "hello"
+-Value::int(42)                      // -> int(-42)
 ```
 
 #### Arithmetic with Rust primitives
@@ -758,11 +773,11 @@ Value::from("he") + Value::from("llo") // → "hello"
 Primitives work on either side:
 
 ```rust
-Value::int(10) + 5       // → int(15)
-5 + Value::int(10)       // → int(15)
-Value::float(1.0) + 0.5  // → float(1.5)
-Value::from("hi") + "!"  // → "hi!"
-"hi" + Value::from("!")  // → "hi!"
+Value::int(10) + 5       // -> int(15)
+5 + Value::int(10)       // -> int(15)
+Value::float(1.0) + 0.5  // -> float(1.5)
+Value::from("hi") + "!"  // -> "hi!"
+"hi" + Value::from("!")  // -> "hi!"
 ```
 
 Supported primitive types: `i32`, `i64`, `i128`, `u32`, `u64`, `f32`, `f64`, `&str`.
@@ -772,7 +787,7 @@ Supported primitive types: `i32`, `i64`, `i128`, `u32`, `u64`, `f32`, `f64`, `&s
 Return `Result<Value, ValueArithmeticError>` instead of panicking:
 
 ```rust
-value.checked_add(&other)   // → Result<Value, ValueArithmeticError>
+value.checked_add(&other)   // -> Result<Value, ValueArithmeticError>
 value.checked_sub(&other)
 value.checked_mul(&other)
 value.checked_div(&other)   // errors on division by zero
@@ -830,7 +845,7 @@ Value::int(1) < Value::float(1.5)   // true (cross-type)
 Value::from("a") < Value::from("b") // true (lexicographic)
 Value::Bool(false) < Value::Bool(true) // true
 
-// Incompatible types → None
+// Incompatible types -> None
 Value::int(1).partial_cmp(&Value::Bool(true)) // None
 ```
 
@@ -883,11 +898,11 @@ if let Some(fields) = value.iter_fields() {
 #### len
 
 ```rust
-value.len()  // → Option<usize>
-// List → Some(element count)
-// Tuple → Some(element count)
-// Struct → Some(field count)
-// Others → None
+value.len()  // -> Option<usize>
+// List -> Some(element count)
+// Tuple -> Some(element count)
+// Struct -> Some(field count)
+// Others -> None
 ```
 
 #### Example
@@ -911,7 +926,7 @@ let high_scorers: Vec<&str> = (&users).into_iter()
 
 `Value` implements both `serde::Serialize` and `serde::Deserialize`.
 
-#### Value → Rust type (`from_value`)
+#### Value -> Rust type (`from_value`)
 
 ```rust
 use uzon::from_value;
@@ -927,7 +942,7 @@ let value = uzon!({"host": "localhost", "port": 8080, "debug": true});
 let config: Config = from_value(value).unwrap();
 ```
 
-#### UZON text → Rust type (`from_str_as`)
+#### UZON text -> Rust type (`from_str_as`)
 
 One-step parse and deserialize:
 
@@ -941,12 +956,12 @@ let config: Config = from_str_as(r#"
 "#).unwrap();
 ```
 
-#### Value → JSON (Serialize)
+#### Value -> JSON (Serialize)
 
 ```rust
 let value = uzon!({"name": "Alice", "scores": [95, 88]});
 let json = serde_json::to_string(&value).unwrap();
-// → {"name":"Alice","scores":[95,88]}
+// -> {"name":"Alice","scores":[95,88]}
 ```
 
 Serialization rules:
@@ -965,7 +980,7 @@ Serialization rules:
 | `Union`, `TaggedUnion` | inner value                    |
 | `Function`             | `null`                         |
 
-#### JSON → Value (Deserialize)
+#### JSON -> Value (Deserialize)
 
 ```rust
 let value: Value = serde_json::from_str(r#"{"name": "Alice", "age": 30}"#).unwrap();
