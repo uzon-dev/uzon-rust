@@ -62,8 +62,8 @@ impl Evaluator {
             NodeKind::IfExpr { condition, then_branch, else_branch } => {
                 self.eval_if_expr(condition, then_branch, else_branch, scope, exclude, node)
             }
-            NodeKind::CaseExpr { scrutinee, when_clauses, else_branch } => {
-                self.eval_case(scrutinee, when_clauses, else_branch, scope, exclude, node)
+            NodeKind::CaseExpr { mode, scrutinee, when_clauses, else_branch } => {
+                self.eval_case(mode, scrutinee, when_clauses, else_branch, scope, exclude, node)
             }
 
             NodeKind::TypeAnnotation { expr, type_expr } => {

@@ -61,6 +61,9 @@ impl Evaluator {
             }
             BinaryOp::Concat => self.eval_binary_concat(left, right, scope, exclude, node),
             BinaryOp::Repeat => self.eval_binary_repeat(left, right, scope, exclude, node),
+            BinaryOp::IsType | BinaryOp::IsNotType => {
+                self.eval_binary_is_type(op, left, right, scope, exclude, node)
+            }
         }
     }
 
@@ -397,6 +400,36 @@ impl Evaluator {
                 node.span.line, node.span.col,
             )),
         }
+    }
+
+    /// `is type` / `is not type` — runtime type check (§3.6, §5.2).
+    ///
+    /// For untagged unions, checks the inner value's type.
+    /// For other values, checks the value's concrete type.
+    fn eval_binary_is_type(
+        &mut self, op: BinaryOp, left: &Node, right: &Node,
+        scope: &mut Scope, exclude: Option<&str>, node: &Node,
+    ) -> Result<Value> {
+        let lv = self.eval_node(left, scope, exclude)?;
+        // §3.1: undefined in 'is type' is a runtime error
+        if lv.is_undefined() {
+            return Err(UzonError::runtime(
+                "'is type' requires a concrete value, got undefined",
+                node.span.line, node.span.col,
+            ));
+        }
+        let type_name = match &right.kind {
+            NodeKind::Identifier { name } => name.as_str(),
+            _ => return Err(UzonError::syntax(
+                "expected type name after 'is type'",
+                node.span.line, node.span.col,
+            )),
+        };
+        // For unions (tagged or untagged), check the inner value's type
+        let inner = Self::unwrap_union(&lv);
+        let actual_type = Self::specific_type_name(inner);
+        let matches = actual_type == type_name;
+        Ok(Value::Bool(if op == BinaryOp::IsType { matches } else { !matches }))
     }
 
     /// §5.3/D.3: numeric type compatibility check with adoption rule.

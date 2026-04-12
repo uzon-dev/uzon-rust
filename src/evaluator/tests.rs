@@ -200,7 +200,7 @@ fn test_struct_override() {
 
 #[test]
 fn test_struct_extension() {
-    let v = eval_val("base is { x is 1 }\nresult is base extends { y is 2 }", "result");
+    let v = eval_val("base is { x is 1 }\nresult is base plus { y is 2 }", "result");
     if let Value::Struct(fields) = v {
         assert_eq!(fields.get("x"), Some(&Value::int(1)));
         assert_eq!(fields.get("y"), Some(&Value::int(2)));
@@ -377,6 +377,105 @@ fn test_case_else_fallthrough() {
         eval_val("x is 99\ny is case x when 1 then 10 else 0", "y"),
         Value::int(0)
     );
+}
+
+// === `is type` / `is not type` (§3.6) ===
+
+#[test]
+fn test_is_type_basic() {
+    assert_eq!(
+        eval_val("x is 42\nresult is x is type i64", "result"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        eval_val("x is 42\nresult is x is type string", "result"),
+        Value::Bool(false)
+    );
+    assert_eq!(
+        eval_val("x is 42\nresult is x is not type f64", "result"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn test_is_type_union() {
+    assert_eq!(
+        eval_val("u is \"hello\" from union i32, string\nresult is u is type string", "result"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        eval_val("u is \"hello\" from union i32, string\nresult is u is type i32", "result"),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn test_is_type_null() {
+    assert_eq!(
+        eval_val("x is null\nresult is x is type null", "result"),
+        Value::Bool(true)
+    );
+}
+
+// === `case type` / `case named` (§5.10) ===
+
+#[test]
+fn test_case_type_dispatch() {
+    let src = r#"
+        u is 42 as i32 from union i32, string
+        result is case type u
+            when i32 then "integer"
+            when string then "text"
+            else "other"
+    "#;
+    assert_eq!(eval_val(src, "result"), Value::String("integer".into()));
+}
+
+#[test]
+fn test_case_type_fallthrough() {
+    let src = r#"
+        u is "hi" from union i64, string, bool
+        result is case type u
+            when i64 then "integer"
+            else "other"
+    "#;
+    assert_eq!(eval_val(src, "result"), Value::String("other".into()));
+}
+
+#[test]
+fn test_case_type_non_union_error() {
+    let src = r#"
+        x is 42
+        result is case type x
+            when i64 then "integer"
+            else "other"
+    "#;
+    let err = eval_err(src);
+    assert!(err.to_string().contains("untagged union"));
+}
+
+#[test]
+fn test_case_type_invalid_member_type_error() {
+    let src = r#"
+        u is 42 as i32 from union i32, string
+        result is case type u
+            when bool then "boolean"
+            else "other"
+    "#;
+    let err = eval_err(src);
+    assert!(err.to_string().contains("not a member type"));
+}
+
+#[test]
+fn test_case_named_dispatch() {
+    let src = r#"
+        status is "ok" named success from success as string, error as string
+        result is case named status
+            when success then "good"
+            when error then "bad"
+            else "unknown"
+    "#;
+    assert_eq!(eval_val(src, "result"), Value::String("good".into()));
 }
 
 // === Functions ===

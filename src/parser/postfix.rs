@@ -52,7 +52,7 @@ impl Parser {
         }
     }
 
-    /// Level 3: `with` / `extends` — struct override/extension (§3.2.1, §3.2.2).
+    /// Level 3: `with` / `plus` — struct override/extension (§3.2.1, §3.2.2).
     ///
     /// No chaining: `base with {...} with {...}` is a syntax error.
     fn parse_struct_override(&mut self) -> Result<Node> {
@@ -65,10 +65,10 @@ impl Parser {
             let overrides = self.parse_struct_literal()?;
             // Reject chaining
             self.skip_newlines();
-            if self.at(TokenType::With) || self.at(TokenType::Extends) {
+            if self.at(TokenType::With) || self.at(TokenType::PlusKw) {
                 let tok = self.peek();
                 return Err(UzonError::syntax(
-                    "cannot chain 'with'/'extends'; use a single operator per expression",
+                    "cannot chain 'with'/'plus'; use a single operator per expression",
                     tok.line,
                     tok.col,
                 ));
@@ -81,17 +81,17 @@ impl Parser {
                 span.line,
                 span.col,
             ))
-        } else if self.at(TokenType::Extends) {
+        } else if self.at(TokenType::PlusKw) {
             let span = self.current_span();
             self.advance();
             self.skip_newlines();
             let extension = self.parse_struct_literal()?;
             // Reject chaining
             self.skip_newlines();
-            if self.at(TokenType::With) || self.at(TokenType::Extends) {
+            if self.at(TokenType::With) || self.at(TokenType::PlusKw) {
                 let tok = self.peek();
                 return Err(UzonError::syntax(
-                    "cannot chain 'with'/'extends'; use a single operator per expression",
+                    "cannot chain 'with'/'plus'; use a single operator per expression",
                     tok.line,
                     tok.col,
                 ));

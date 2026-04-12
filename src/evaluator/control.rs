@@ -10,8 +10,14 @@ use super::{Evaluator, values_equal};
 
 impl Evaluator {
     /// Evaluate a case/when expression (§5.10, §5.9).
+    ///
+    /// Three modes:
+    /// - `CaseMode::Value` — value matching (`case expr`)
+    /// - `CaseMode::Type` — type dispatch on untagged unions (`case type expr`)
+    /// - `CaseMode::Named` — variant dispatch on tagged unions (`case named expr`)
     pub(crate) fn eval_case(
         &mut self,
+        mode: &CaseMode,
         scrutinee: &Node,
         when_clauses: &[WhenClause],
         else_branch: &Node,
@@ -25,26 +31,101 @@ impl Evaluator {
             return Err(UzonError::runtime("cannot match against undefined", node.span.line, node.span.col));
         }
 
-        // §11.2.1: cannot branch on untagged union values with case
-        if matches!(&scrut_val, Value::Union(_)) {
-            return Err(UzonError::type_error(
-                "cannot branch on untagged union with 'case'; use tagged union instead",
-                node.span.line, node.span.col,
-            ));
+        match mode {
+            CaseMode::Value => {
+                // §11.2.1: cannot branch on untagged union values with plain case
+                if matches!(&scrut_val, Value::Union(_)) {
+                    return Err(UzonError::type_error(
+                        "cannot branch on untagged union with 'case'; use 'case type' instead",
+                        node.span.line, node.span.col,
+                    ));
+                }
+                self.eval_case_value(when_clauses, &scrut_val, else_branch, scope, exclude, node)
+            }
+            CaseMode::Named => {
+                self.eval_case_named(when_clauses, &scrut_val, else_branch, scope, exclude, node)
+            }
+            CaseMode::Type => {
+                self.eval_case_type(when_clauses, &scrut_val, else_branch, scope, exclude, node)
+            }
         }
+    }
 
-        // Phase 1: Find the matching clause
+    /// `case expr` — value matching.
+    fn eval_case_value(
+        &mut self,
+        when_clauses: &[WhenClause],
+        scrut_val: &Value,
+        else_branch: &Node,
+        scope: &mut Scope,
+        exclude: Option<&str>,
+        node: &Node,
+    ) -> Result<Value> {
+        let mut matched_result: Option<Value> = None;
+        for wc in when_clauses {
+            self.eval_case_when_value(wc, scrut_val, &mut matched_result, scope, exclude)?;
+        }
+        self.typecheck_case_branches(matched_result, when_clauses, else_branch, scope, exclude, node)
+    }
+
+    /// `case named expr` — variant dispatch on tagged unions.
+    fn eval_case_named(
+        &mut self,
+        when_clauses: &[WhenClause],
+        scrut_val: &Value,
+        else_branch: &Node,
+        scope: &mut Scope,
+        exclude: Option<&str>,
+        node: &Node,
+    ) -> Result<Value> {
+        let mut matched_result: Option<Value> = None;
+        for wc in when_clauses {
+            self.eval_case_when_named(wc, scrut_val, &mut matched_result, scope, exclude, node)?;
+        }
+        self.typecheck_case_branches(matched_result, when_clauses, else_branch, scope, exclude, node)
+    }
+
+    /// `case type expr` — type dispatch on untagged unions (§3.6).
+    fn eval_case_type(
+        &mut self,
+        when_clauses: &[WhenClause],
+        scrut_val: &Value,
+        else_branch: &Node,
+        scope: &mut Scope,
+        exclude: Option<&str>,
+        node: &Node,
+    ) -> Result<Value> {
+        let union = match scrut_val {
+            Value::Union(u) => u,
+            _ => return Err(UzonError::type_error(
+                format!("'case type' requires untagged union scrutinee, got {}", scrut_val.type_name()),
+                node.span.line, node.span.col,
+            )),
+        };
+
+        let inner_type = Self::specific_type_name(&union.value);
         let mut matched_result: Option<Value> = None;
 
         for wc in when_clauses {
-            if wc.is_named {
-                self.eval_case_when_named(wc, &scrut_val, &mut matched_result, scope, exclude, node)?;
-            } else {
-                self.eval_case_when_value(wc, &scrut_val, &mut matched_result, scope, exclude)?;
+            let type_name = match &wc.value.kind {
+                NodeKind::Identifier { name } => name.as_str(),
+                _ => return Err(UzonError::syntax(
+                    "expected type name after 'when' in 'case type'",
+                    wc.value.span.line, wc.value.span.col,
+                )),
+            };
+            // Validate type name is a member of the union
+            if !union.types.iter().any(|t| t == type_name) {
+                return Err(UzonError::type_error(
+                    format!("'{}' is not a member type of this union", type_name),
+                    wc.value.span.line, wc.value.span.col,
+                ));
+            }
+            if matched_result.is_none() && inner_type == type_name {
+                matched_result = Some(self.eval_node(&wc.result, scope, exclude)?);
             }
         }
 
-        // Phase 2: Type-check all branches speculatively
         self.typecheck_case_branches(matched_result, when_clauses, else_branch, scope, exclude, node)
     }
 
