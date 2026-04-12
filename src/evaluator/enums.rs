@@ -163,7 +163,8 @@ impl Evaluator {
             ));
         }
 
-        // §6.3: `value as TaggedUnionType named variant` — type reuse
+        // §6.3: `value as TaggedUnionType named variant` or
+        // `value named variant as TaggedUnionType` — type reuse
         if variants.is_empty() {
             if let NodeKind::TypeAnnotation { expr, type_expr } = &value.kind {
                 let tu_info = scope.resolve_type_path(&type_expr.path)
@@ -181,7 +182,11 @@ impl Evaluator {
                             node.span.line, node.span.col,
                         ));
                     }
-                    let val = self.eval_node(expr, scope, exclude)?;
+                    let mut val = self.eval_node(expr, scope, exclude)?;
+                    // Adopt the variant's declared type for untyped numeric values.
+                    if let Some(Some(variant_type)) = tv.get(tag) {
+                        Self::adopt_variant_type(&mut val, variant_type);
+                    }
                     return Ok(Value::TaggedUnion(UzonTaggedUnion::new(
                         val, tag, tv, Some(type_name),
                     )));
@@ -202,7 +207,7 @@ impl Evaluator {
             }
         }
 
-        let val = self.eval_node(value, scope, exclude)?;
+        let mut val = self.eval_node(value, scope, exclude)?;
         let variant_map: BTreeMap<String, Option<String>> = variants
             .iter()
             .map(|(name, te)| {
@@ -211,6 +216,30 @@ impl Evaluator {
             })
             .collect();
 
+        // Adopt the variant's declared type for untyped numeric values.
+        if let Some(Some(variant_type)) = variant_map.get(tag) {
+            Self::adopt_variant_type(&mut val, variant_type);
+        }
+
         Ok(Value::TaggedUnion(UzonTaggedUnion::new(val, tag, variant_map, None)))
+    }
+
+    /// Adopt a variant's declared type for untyped numeric values.
+    fn adopt_variant_type(val: &mut Value, variant_type: &str) {
+        match val {
+            Value::Integer(n) if !n.explicit => {
+                if let Some(it) = IntegerType::from_type_name(variant_type) {
+                    n.type_ann = it;
+                    n.explicit = true;
+                }
+            }
+            Value::Float(f) if !f.explicit => {
+                if let Some(ft) = FloatType::from_type_name(variant_type) {
+                    f.type_ann = ft;
+                    f.explicit = true;
+                }
+            }
+            _ => {}
+        }
     }
 }

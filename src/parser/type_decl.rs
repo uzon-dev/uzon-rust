@@ -163,7 +163,7 @@ impl Parser {
         ))
     }
 
-    /// Parse `named tag [from variant as type, ...]` — tagged union (§3.7).
+    /// Parse `named tag [from variant as type, ...]` or `named tag as TypeName` — tagged union (§3.7, §6.3).
     fn parse_named_clause(&mut self, value: Node) -> Result<Node> {
         let span = self.current_span();
         self.advance(); // consume `named`
@@ -172,12 +172,28 @@ impl Parser {
         let tag = self.parse_variant_name()?;
 
         self.skip_newlines();
-        let variants = if self.at(TokenType::From) {
+        let (value, variants) = if self.at(TokenType::From) {
             self.advance();
             self.skip_newlines();
-            self.parse_tagged_union_variants()?
+            (value, self.parse_tagged_union_variants()?)
+        } else if self.at(TokenType::As) {
+            // §6.3 type reuse: `value named tag as TypeName`
+            // Wrap value in TypeAnnotation to match evaluator's expected AST shape.
+            let as_span = self.current_span();
+            self.advance();
+            self.skip_newlines();
+            let type_expr = self.parse_type_expr()?;
+            let annotated = Node::new(
+                NodeKind::TypeAnnotation {
+                    expr: Box::new(value),
+                    type_expr,
+                },
+                as_span.line,
+                as_span.col,
+            );
+            (annotated, Vec::new())
         } else {
-            Vec::new()
+            (value, Vec::new())
         };
 
         Ok(Node::new(

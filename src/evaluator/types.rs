@@ -622,9 +622,9 @@ impl Evaluator {
 
         match type_name {
             "string" => {
-                // §5.11.2: compound types cannot be converted to string
+                // §5.11.2: compound types and functions cannot be converted to string
                 match &val {
-                    Value::Struct(_) | Value::List(_) | Value::Tuple(_) => {
+                    Value::Struct(_) | Value::List(_) | Value::Tuple(_) | Value::Function(_) => {
                         Err(UzonError::type_error(
                             format!("cannot convert {} to string", val.type_name()),
                             node.span.line, node.span.col,

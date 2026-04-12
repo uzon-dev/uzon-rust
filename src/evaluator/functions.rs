@@ -18,6 +18,13 @@ impl Evaluator {
         node: &Node,
     ) -> Result<Value> {
         let func_val = self.eval_node(callee, scope, exclude)?;
+        // §3.1: calling undefined is a runtime error; calling non-function is a type error (§5.15)
+        if func_val.is_undefined() {
+            return Err(UzonError::runtime(
+                "cannot call undefined, expected function",
+                node.span.line, node.span.col,
+            ));
+        }
         let func = match func_val {
             Value::Function(f) => f,
             _ => return Err(UzonError::type_error(
@@ -62,7 +69,8 @@ impl Evaluator {
             } else if let Some(ref default_expr) = param.default {
                 self.eval_node(default_expr, &mut default_scope, None)?
             } else {
-                return Err(UzonError::runtime(
+                // §5.15: wrong number of arguments is a type error
+                return Err(UzonError::type_error(
                     format!("missing argument for parameter '{}'", param.name),
                     node.span.line, node.span.col,
                 ));
@@ -123,9 +131,9 @@ impl Evaluator {
             func_scope.define(param.name.clone(), val);
         }
 
-        // Check for too many arguments
+        // §5.15: wrong number of arguments is a type error
         if arg_vals.len() > func.params.len() {
-            return Err(UzonError::runtime(
+            return Err(UzonError::type_error(
                 format!(
                     "too many arguments: expected {}, got {}",
                     func.params.len(), arg_vals.len()

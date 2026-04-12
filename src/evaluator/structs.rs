@@ -226,7 +226,8 @@ impl Evaluator {
 
             let new_val = self.eval_node(&field.value, scope, exclude)?;
             if new_val.is_undefined() {
-                return Err(UzonError::type_error(
+                // §3.2.1: override evaluating to undefined is a runtime error
+                return Err(UzonError::runtime(
                     format!("cannot override field '{}' with undefined", field.name),
                     field.span.line, field.span.col,
                 ));
@@ -282,7 +283,8 @@ impl Evaluator {
             if base_map.contains_key(&field.name) {
                 let old_val = &base_map[&field.name];
                 if new_val.is_undefined() {
-                    return Err(UzonError::type_error(
+                    // §3.2.2: override evaluating to undefined is a runtime error
+                    return Err(UzonError::runtime(
                         format!("cannot override field '{}' with undefined", field.name),
                         field.span.line, field.span.col,
                     ));

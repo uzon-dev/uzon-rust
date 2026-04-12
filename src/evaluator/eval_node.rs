@@ -158,40 +158,47 @@ impl Evaluator {
         } else {
             self.eval_node(right, scope, exclude)
         };
-        if let Ok(rv) = rv_result {
-            if !matches!(lv, Value::Null) && !matches!(rv, Value::Null)
-                && !rv.is_undefined()
-            {
-                if lv.type_name() != rv.type_name() {
-                    return Err(UzonError::type_error(
-                        format!(
-                            "'or else' operands must be the same type, got {} and {}",
-                            lv.type_name(), rv.type_name()
-                        ),
-                        node.span.line, node.span.col,
-                    ));
-                }
-                // D.3: exact numeric type_ann must be compatible
-                match (&lv, &rv) {
-                    (Value::Integer(li), Value::Integer(ri)) => {
-                        if let Err(msg) = UzonInteger::adopt_type(&li.type_ann, &ri.type_ann) {
-                            return Err(UzonError::type_error(
-                                format!("'or else' operands must be the same type: {msg}"),
-                                node.span.line, node.span.col,
-                            ));
-                        }
+        // §D.5: speculatively evaluate right operand — suppress RuntimeError, propagate TypeError.
+        match rv_result {
+            Ok(rv) => {
+                if !matches!(lv, Value::Null) && !matches!(rv, Value::Null)
+                    && !rv.is_undefined()
+                {
+                    if lv.type_name() != rv.type_name()
+                        && !super::can_adopt_cross_category(&lv, &rv)
+                    {
+                        return Err(UzonError::type_error(
+                            format!(
+                                "'or else' operands must be the same type, got {} and {}",
+                                lv.type_name(), rv.type_name()
+                            ),
+                            node.span.line, node.span.col,
+                        ));
                     }
-                    (Value::Float(lf), Value::Float(rf)) => {
-                        if let Err(msg) = UzonFloat::adopt_type(&lf.type_ann, &rf.type_ann) {
-                            return Err(UzonError::type_error(
-                                format!("'or else' operands must be the same type: {msg}"),
-                                node.span.line, node.span.col,
-                            ));
+                    // D.3: exact numeric type_ann must be compatible
+                    match (&lv, &rv) {
+                        (Value::Integer(li), Value::Integer(ri)) => {
+                            if let Err(msg) = UzonInteger::adopt_type(&li.type_ann, &ri.type_ann) {
+                                return Err(UzonError::type_error(
+                                    format!("'or else' operands must be the same type: {msg}"),
+                                    node.span.line, node.span.col,
+                                ));
+                            }
                         }
+                        (Value::Float(lf), Value::Float(rf)) => {
+                            if let Err(msg) = UzonFloat::adopt_type(&lf.type_ann, &rf.type_ann) {
+                                return Err(UzonError::type_error(
+                                    format!("'or else' operands must be the same type: {msg}"),
+                                    node.span.line, node.span.col,
+                                ));
+                            }
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
+            Err(e) if e.is_runtime() => {} // §D.5: suppress RuntimeError
+            Err(e) => return Err(e),        // §D.5: propagate TypeError
         }
         Ok(lv)
     }
@@ -211,27 +218,31 @@ impl Evaluator {
         match cond {
             Value::Bool(true) => {
                 let then_val = self.eval_node(then_branch, scope, exclude)?;
-                // §5.9: speculative type check of else branch
+                // §5.9/§D.5: speculative type check of else branch
                 let else_result = if let Value::Enum(ref e) = then_val {
                     self.resolve_enum_context(else_branch, e, scope, exclude)
                 } else {
                     self.eval_node(else_branch, scope, exclude)
                 };
-                if let Ok(else_val) = else_result {
-                    Self::check_branch_types(&then_val, &else_val, node)?;
+                match else_result {
+                    Ok(else_val) => Self::check_branch_types(&then_val, &else_val, node)?,
+                    Err(e) if e.is_runtime() => {} // §D.5: suppress RuntimeError
+                    Err(e) => return Err(e),        // §D.5: propagate TypeError
                 }
                 Ok(then_val)
             }
             Value::Bool(false) => {
                 let else_val = self.eval_node(else_branch, scope, exclude)?;
-                // §5.9: speculative type check of then branch
+                // §5.9/§D.5: speculative type check of then branch
                 let then_result = if let Value::Enum(ref e) = else_val {
                     self.resolve_enum_context(then_branch, e, scope, exclude)
                 } else {
                     self.eval_node(then_branch, scope, exclude)
                 };
-                if let Ok(then_val) = then_result {
-                    Self::check_branch_types(&then_val, &else_val, node)?;
+                match then_result {
+                    Ok(then_val) => Self::check_branch_types(&then_val, &else_val, node)?,
+                    Err(e) if e.is_runtime() => {} // §D.5: suppress RuntimeError
+                    Err(e) => return Err(e),        // §D.5: propagate TypeError
                 }
                 Ok(else_val)
             }
@@ -331,8 +342,9 @@ impl Evaluator {
                     }
                     // §3.6/§3.7.1: unions are transparent in string interpolation
                     let val = Self::unwrap_union_owned(val);
+                    // §5.11.2: compound types and functions cannot be converted to string
                     match &val {
-                        Value::Struct(_) | Value::List(_) | Value::Tuple(_) => {
+                        Value::Struct(_) | Value::List(_) | Value::Tuple(_) | Value::Function(_) => {
                             return Err(UzonError::type_error(
                                 format!("{} cannot be converted to string", val.type_name()),
                                 expr.span.line,
