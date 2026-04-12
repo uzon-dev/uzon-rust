@@ -183,7 +183,7 @@ impl Parser {
         ))
     }
 
-    /// Level 14: `is`, `is not`, `is named`, `is not named` — equality/variant check (§5.2, §3.7.2).
+    /// Level 14: `is`, `is not`, `is named`, `is not named`, `is type`, `is not type` — equality/variant/type check (§5.2, §3.6, §3.7.2).
     ///
     /// No chaining: `a is b is c` is a syntax error.
     fn parse_equality(&mut self) -> Result<Node> {
@@ -250,6 +250,48 @@ impl Parser {
                 Ok(Node::new(
                     NodeKind::BinaryOp {
                         op: BinaryOp::IsNotNamed,
+                        left: Box::new(left),
+                        right: Box::new(Node::new(
+                            NodeKind::Identifier {
+                                name: name_tok.value,
+                            },
+                            name_tok.line,
+                            name_tok.col,
+                        )),
+                    },
+                    span.line,
+                    span.col,
+                ))
+            }
+            TokenType::IsType => {
+                let span = self.current_span();
+                self.advance();
+                self.skip_newlines();
+                let name_tok = self.advance().clone();
+                Ok(Node::new(
+                    NodeKind::BinaryOp {
+                        op: BinaryOp::IsType,
+                        left: Box::new(left),
+                        right: Box::new(Node::new(
+                            NodeKind::Identifier {
+                                name: name_tok.value,
+                            },
+                            name_tok.line,
+                            name_tok.col,
+                        )),
+                    },
+                    span.line,
+                    span.col,
+                ))
+            }
+            TokenType::IsNotType => {
+                let span = self.current_span();
+                self.advance();
+                self.skip_newlines();
+                let name_tok = self.advance().clone();
+                Ok(Node::new(
+                    NodeKind::BinaryOp {
+                        op: BinaryOp::IsNotType,
                         left: Box::new(left),
                         right: Box::new(Node::new(
                             NodeKind::Identifier {

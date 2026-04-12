@@ -10,7 +10,7 @@
 /// Expression precedence levels (highest to lowest):
 ///   1. Member access (`.`) and function call `()`
 ///   2. Conversion (`to`)
-///   3. Struct override (`with`) / extension (`extends`)
+///   3. Struct override (`with`) / extension (`plus`)
 ///   4. Type annotation (`as`)
 ///   5. Type declaration (`from`, `named`)
 ///   7. Power (`^`, right-associative)

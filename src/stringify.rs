@@ -177,7 +177,7 @@ fn is_stringify_keyword(name: &str) -> bool {
             | "called" | "struct" | "union"
             | "true" | "false" | "null" | "undefined"
             | "self" | "env" | "inf" | "nan"
-            | "function" | "returns" | "default" | "extends"
+            | "function" | "returns" | "default" | "plus"
             | "lazy" | "type"
     )
 }

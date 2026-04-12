@@ -44,13 +44,16 @@ pub enum TokenType {
     Function,
     Returns,
     Default,
-    Extends,
+    PlusKw,  // `plus` keyword (struct extension), distinct from Plus (`+` operator)
+    Type,    // `type` keyword (runtime type check)
 
     // Composite operators — synthesized from multi-token sequences (§5.2, §5.7)
     OrElse,      // `or else`
     IsNot,       // `is not`
     IsNamed,     // `is named`
     IsNotNamed,  // `is not named`
+    IsType,      // `is type`
+    IsNotType,   // `is not type`
 
     // Operators (§2.6)
     Plus,
@@ -115,8 +118,8 @@ pub fn is_keyword(s: &str) -> bool {
 
 /// Maps a keyword string to its TokenType.
 ///
-/// Reserved keywords (`lazy`, `type`) are recognized by `is_keyword()` /
-/// `is_reserved_keyword()` but have no distinct token type — they are
+/// Reserved keyword (`lazy`) is recognized by `is_keyword()` /
+/// `is_reserved_keyword()` but has no distinct token type — it is
 /// reserved for future use (§2.5).
 pub fn keyword_token_type(s: &str) -> Option<TokenType> {
     match s {
@@ -150,9 +153,10 @@ pub fn keyword_token_type(s: &str) -> Option<TokenType> {
         "function" => Some(TokenType::Function),
         "returns" => Some(TokenType::Returns),
         "default" => Some(TokenType::Default),
-        "extends" => Some(TokenType::Extends),
+        "plus" => Some(TokenType::PlusKw),
+        "type" => Some(TokenType::Type),
         // Reserved keywords (§2.5): recognized but no distinct token type.
-        "lazy" | "type" | "self" => None,
+        "lazy" => None,
         _ => None,
     }
 }
@@ -198,5 +202,5 @@ pub fn is_value_token(tt: TokenType) -> bool {
 
 /// Returns true if the given string is a reserved keyword for future use (§2.5).
 pub fn is_reserved_keyword(s: &str) -> bool {
-    matches!(s, "lazy" | "type" | "self")
+    matches!(s, "lazy")
 }

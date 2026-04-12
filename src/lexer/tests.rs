@@ -220,9 +220,8 @@ fn test_comment_lines_tracked() {
 
 #[test]
 fn test_reserved_keyword_rejected() {
-    let result = Lexer::new("type is 1").tokenize();
-    assert!(result.is_err());
-    let result = Lexer::new("self.name").tokenize();
+    // `lazy` is the only remaining reserved keyword (§2.5)
+    let result = Lexer::new("lazy is 1").tokenize();
     assert!(result.is_err());
 }
 

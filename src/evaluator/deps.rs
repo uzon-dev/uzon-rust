@@ -145,7 +145,7 @@ impl Evaluator {
                 Self::collect_function_calls(then_branch, func_names, calls);
                 Self::collect_function_calls(else_branch, func_names, calls);
             }
-            NodeKind::CaseExpr { scrutinee, when_clauses, else_branch } => {
+            NodeKind::CaseExpr { scrutinee, when_clauses, else_branch, .. } => {
                 Self::collect_function_calls(scrutinee, func_names, calls);
                 for wc in when_clauses {
                     Self::collect_function_calls(&wc.value, func_names, calls);
@@ -298,7 +298,7 @@ impl Evaluator {
             }
             NodeKind::NamedVariant { value, .. } => Self::expr_references_name(value, name),
             NodeKind::FieldExtraction { .. } => true,
-            NodeKind::CaseExpr { scrutinee, when_clauses, else_branch } => {
+            NodeKind::CaseExpr { scrutinee, when_clauses, else_branch, .. } => {
                 Self::expr_references_name(scrutinee, name)
                     || when_clauses.iter().any(|w| Self::expr_references_name(&w.result, name))
                     || Self::expr_references_name(else_branch, name)
@@ -345,7 +345,7 @@ impl Evaluator {
                 self.collect_deps(then_branch, names, name_to_idx, _exclude, _scope, deps);
                 self.collect_deps(else_branch, names, name_to_idx, _exclude, _scope, deps);
             }
-            NodeKind::CaseExpr { scrutinee, when_clauses, else_branch } => {
+            NodeKind::CaseExpr { scrutinee, when_clauses, else_branch, .. } => {
                 self.collect_deps(scrutinee, names, name_to_idx, _exclude, _scope, deps);
                 for wc in when_clauses {
                     self.collect_deps(&wc.value, names, name_to_idx, _exclude, _scope, deps);
@@ -452,7 +452,7 @@ impl Evaluator {
                 self.collect_type_deps(then_branch, called_to_idx, deps);
                 self.collect_type_deps(else_branch, called_to_idx, deps);
             }
-            NodeKind::CaseExpr { scrutinee, when_clauses, else_branch } => {
+            NodeKind::CaseExpr { scrutinee, when_clauses, else_branch, .. } => {
                 self.collect_type_deps(scrutinee, called_to_idx, deps);
                 for wc in when_clauses {
                     self.collect_type_deps(&wc.value, called_to_idx, deps);

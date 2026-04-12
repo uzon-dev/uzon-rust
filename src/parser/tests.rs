@@ -392,7 +392,7 @@ fn test_function_call() {
 
 #[test]
 fn test_struct_extends() {
-    let doc = parse("x is base extends { extra is true }");
+    let doc = parse("x is base plus { extra is true }");
     assert!(matches!(
         doc.bindings[0].value.kind,
         NodeKind::StructExtension { .. }

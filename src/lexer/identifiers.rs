@@ -62,6 +62,13 @@ impl Lexer {
                         start_line,
                         start_col,
                     ));
+                } else if self.try_consume_keyword("type") {
+                    self.tokens.push(Token::new(
+                        TokenType::IsNotType,
+                        "is not type",
+                        start_line,
+                        start_col,
+                    ));
                 } else {
                     self.tokens.push(Token::new(
                         TokenType::IsNot,
@@ -76,6 +83,15 @@ impl Lexer {
                 self.tokens.push(Token::new(
                     TokenType::IsNamed,
                     "is named",
+                    start_line,
+                    start_col,
+                ));
+                return Ok(());
+            }
+            if self.try_consume_keyword("type") {
+                self.tokens.push(Token::new(
+                    TokenType::IsType,
+                    "is type",
                     start_line,
                     start_col,
                 ));

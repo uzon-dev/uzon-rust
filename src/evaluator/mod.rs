@@ -329,6 +329,19 @@ impl Evaluator {
         Ok(())
     }
 
+    /// Return the specific type name of a value for `is type` / `case type` comparisons.
+    ///
+    /// For numeric types this returns the concrete type annotation (e.g. "i32", "f64"),
+    /// not the generic category ("integer", "float").
+    pub(crate) fn specific_type_name(val: &Value) -> String {
+        match val {
+            Value::Integer(n) => n.type_ann.display_name(),
+            Value::Float(f) => f.type_ann.display_name().to_string(),
+            Value::BigInteger(_) => "integer".to_string(),
+            other => other.type_name().to_string(),
+        }
+    }
+
     pub(crate) fn assert_bool(&self, val: &Value, node: &Node) -> Result<()> {
         if !matches!(val, Value::Bool(_)) {
             Err(UzonError::type_error(

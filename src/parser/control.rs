@@ -37,7 +37,12 @@ impl Parser {
         ))
     }
 
-    /// Parse `case expr when v then r ... else default` (§5.10).
+    /// Parse `case [type|named] expr when v then r ... else default` (§5.10).
+    ///
+    /// Three forms:
+    /// - `case expr` — value matching
+    /// - `case type expr` — type dispatch (untagged unions)
+    /// - `case named expr` — variant dispatch (tagged unions)
     ///
     /// At least one `when` clause is required.
     pub(crate) fn parse_case_expr(&mut self) -> Result<Node> {
@@ -47,6 +52,20 @@ impl Parser {
             col: tok.col,
         };
         self.skip_newlines();
+
+        // Determine case mode: `case type`, `case named`, or plain `case`
+        let mode = if self.at(TokenType::Type) {
+            self.advance();
+            self.skip_newlines();
+            CaseMode::Type
+        } else if self.at(TokenType::Named) {
+            self.advance();
+            self.skip_newlines();
+            CaseMode::Named
+        } else {
+            CaseMode::Value
+        };
+
         let scrutinee = self.parse_expression()?;
 
         let mut when_clauses = Vec::new();
@@ -59,19 +78,25 @@ impl Parser {
             self.advance();
             self.skip_newlines();
 
-            // `when named <tag>` for tagged union matching (§3.7.2)
-            let (value, is_named) = if self.at(TokenType::Named) {
-                self.advance();
-                self.skip_newlines();
-                let name = self.parse_variant_name()?;
-                let node = Node::new(
-                    NodeKind::Identifier { name },
-                    when_span.line,
-                    when_span.col,
-                );
-                (node, true)
-            } else {
-                (self.parse_expression()?, false)
+            // For `case named` and `case type`, when values are bare identifiers (tags/types)
+            let value = match mode {
+                CaseMode::Named => {
+                    let name = self.parse_variant_name()?;
+                    Node::new(
+                        NodeKind::Identifier { name },
+                        when_span.line,
+                        when_span.col,
+                    )
+                }
+                CaseMode::Type => {
+                    let name_tok = self.advance().clone();
+                    Node::new(
+                        NodeKind::Identifier { name: name_tok.value },
+                        name_tok.line,
+                        name_tok.col,
+                    )
+                }
+                CaseMode::Value => self.parse_expression()?,
             };
 
             self.skip_newlines();
@@ -82,7 +107,6 @@ impl Parser {
             when_clauses.push(WhenClause {
                 value,
                 result,
-                is_named,
                 span: when_span,
             });
         }
@@ -103,6 +127,7 @@ impl Parser {
 
         Ok(Node::new(
             NodeKind::CaseExpr {
+                mode,
                 scrutinee: Box::new(scrutinee),
                 when_clauses,
                 else_branch: Box::new(else_branch),

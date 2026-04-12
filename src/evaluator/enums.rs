@@ -83,9 +83,39 @@ impl Evaluator {
                 node.span.line, node.span.col,
             ));
         }
-        let val = self.eval_node(value, scope, exclude)?;
+        let mut val = self.eval_node(value, scope, exclude)?;
         let type_names: Vec<String> = types.iter().map(|t| t.path.join(".")).collect();
+
+        // Adopt matching member type for untyped numeric values so that
+        // `42 from union i32, string` stores the inner value as i32.
+        Self::adopt_union_member_type(&mut val, &type_names);
+
         Ok(Value::Union(UzonUnion::new(val, type_names, None)))
+    }
+
+    /// For untyped numeric values, adopt the matching union member type.
+    fn adopt_union_member_type(val: &mut Value, type_names: &[String]) {
+        match val {
+            Value::Integer(n) if !n.explicit => {
+                for tn in type_names {
+                    if let Some(it) = IntegerType::from_type_name(tn) {
+                        n.type_ann = it;
+                        n.explicit = true;
+                        return;
+                    }
+                }
+            }
+            Value::Float(f) if !f.explicit => {
+                for tn in type_names {
+                    if let Some(ft) = FloatType::from_type_name(tn) {
+                        f.type_ann = ft;
+                        f.explicit = true;
+                        return;
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     pub(crate) fn eval_named_variant(

@@ -251,25 +251,25 @@ impl Evaluator {
     ) -> Result<Value> {
         let base_val = self.eval_node(base, scope, exclude)?;
         if base_val.is_undefined() {
-            return Err(UzonError::runtime("'extends' requires a struct base, got undefined", node.span.line, node.span.col));
+            return Err(UzonError::runtime("'plus' requires a struct base, got undefined", node.span.line, node.span.col));
         }
         let base_map = match base_val {
             Value::Struct(m) => m,
             _ => return Err(UzonError::type_error(
-                format!("'extends' requires a struct base, got {}", base_val.type_name()),
+                format!("'plus' requires a struct base, got {}", base_val.type_name()),
                 node.span.line, node.span.col,
             )),
         };
 
         let ext_fields = match &extension.kind {
             NodeKind::StructLiteral { fields } => fields,
-            _ => return Err(UzonError::syntax("'extends' requires a struct literal", node.span.line, node.span.col)),
+            _ => return Err(UzonError::syntax("'plus' requires a struct literal", node.span.line, node.span.col)),
         };
 
         let has_new_field = ext_fields.iter().any(|f| !base_map.contains_key(&f.name));
         if !has_new_field {
             return Err(UzonError::type_error(
-                "'extends' must add at least one new field; use 'with' for pure overrides",
+                "'plus' must add at least one new field; use 'with' for pure overrides",
                 node.span.line, node.span.col,
             ));
         }
@@ -287,9 +287,9 @@ impl Evaluator {
                         field.span.line, field.span.col,
                     ));
                 }
-                Self::check_override_type_compat(old_val, &new_val, &field.name, &field.value.kind, "extends", false, field.span.line, field.span.col)?;
+                Self::check_override_type_compat(old_val, &new_val, &field.name, &field.value.kind, "plus", false, field.span.line, field.span.col)?;
                 let mut new_val = new_val;
-                Self::adopt_type_from_base(&base_map[&field.name], &mut new_val, &field.name, "extends", field.span.line, field.span.col)?;
+                Self::adopt_type_from_base(&base_map[&field.name], &mut new_val, &field.name, "plus", field.span.line, field.span.col)?;
                 result.insert(field.name.clone(), new_val);
             } else {
                 result.insert(field.name.clone(), new_val);

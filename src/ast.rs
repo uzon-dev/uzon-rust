@@ -31,12 +31,19 @@ pub struct FunctionParam {
     pub span: Span,
 }
 
+/// The mode of a `case` expression (§5.10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaseMode {
+    Value,  // `case expr` — value matching
+    Type,   // `case type expr` — type dispatch (untagged unions)
+    Named,  // `case named expr` — variant dispatch (tagged unions)
+}
+
 /// A `when` clause in a `case` expression (§5.10).
 #[derive(Debug, Clone, PartialEq)]
 pub struct WhenClause {
     pub value: Node,
     pub result: Node,
-    pub is_named: bool,
     pub span: Span,
 }
 
@@ -117,8 +124,9 @@ pub enum NodeKind {
         then_branch: Box<Node>,
         else_branch: Box<Node>,
     },
-    /// `case expr when v1 then r1 ... else default` — multi-branch match (§5.10).
+    /// `case [type|named] expr when v1 then r1 ... else default` — multi-branch match (§5.10).
     CaseExpr {
+        mode: CaseMode,
         scrutinee: Box<Node>,
         when_clauses: Vec<WhenClause>,
         else_branch: Box<Node>,
@@ -174,7 +182,7 @@ pub enum NodeKind {
         base: Box<Node>,
         overrides: Box<Node>,
     },
-    /// `base extends { extension }` — struct extension (§3.2.2).
+    /// `base plus { extension }` — struct extension (§3.2.2).
     StructExtension {
         base: Box<Node>,
         extension: Box<Node>,
@@ -233,6 +241,8 @@ pub enum BinaryOp {
     IsNot,       // `is not` inequality (§5.2)
     IsNamed,     // `is named` tagged union variant check (§3.7.2)
     IsNotNamed,  // `is not named` (§3.7.2)
+    IsType,      // `is type` runtime type check (§3.6)
+    IsNotType,   // `is not type` (§3.6)
     In,          // `in` membership test (§5.8.1)
 }
 
