@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 use crate::ast::*;
-use crate::error::{Result, UzonError};
+use crate::error::Result;
 use crate::token::TokenType;
 
 use super::Parser;
@@ -160,27 +160,6 @@ impl Parser {
             );
         }
         Ok(left)
-    }
-
-    /// Helper for binding decomposition: `is named` at binding start.
-    ///
-    /// This pattern (`x is named tag ...`) cannot produce a valid binding value
-    /// because `named` requires a preceding value expression. This is a user error.
-    pub(crate) fn wrap_named(&mut self, tag_node: Node, _line: usize, _col: usize) -> Result<Node> {
-        Err(UzonError::syntax(
-            "'is named' cannot appear at the start of a binding value; \
-             for tagged unions use: x is <value> named <tag> from ...",
-            tag_node.span.line,
-            tag_node.span.col,
-        ))
-    }
-
-    pub(crate) fn wrap_not_named(&mut self, _expr: Node, line: usize, col: usize) -> Result<Node> {
-        Err(UzonError::syntax(
-            "'is not named' cannot appear at the start of a binding value",
-            line,
-            col,
-        ))
     }
 
     /// Level 14: `is`, `is not`, `is named`, `is not named`, `is type`, `is not type` — equality/variant/type check (§5.2, §3.6, §3.7.2).

@@ -111,7 +111,7 @@ impl Parser {
 
     /// Level 2: `to` — type conversion (§5.11).
     fn parse_conversion(&mut self) -> Result<Node> {
-        let expr = self.parse_member_access()?;
+        let expr = self.parse_call_or_access()?;
         self.skip_newlines();
         if self.at(TokenType::To) {
             let span = self.current_span();
@@ -131,10 +131,18 @@ impl Parser {
         }
     }
 
-    /// Level 1: `.` and `()` — member access and function call (§5.12, §3.8), left-associative.
-    pub(crate) fn parse_member_access(&mut self) -> Result<Node> {
+    /// Level 1: `.` and `()` — `call_or_access` production (§9).
+    ///
+    /// Member access and function call share the same precedence and are
+    /// left-associative.  Per §5.15 and §8, the opening `(` of a function
+    /// call **MUST** be on the same line as the callee — a `(` on the next
+    /// line starts a new expression (tuple or grouping), not a call.
+    fn parse_call_or_access(&mut self) -> Result<Node> {
         let mut expr = self.parse_primary()?;
         loop {
+            // Record the line of the last token of the current expression
+            // BEFORE consuming any newlines — needed for the same-line rule.
+            let callee_end_line = self.prev_line();
             self.skip_newlines();
             if self.at(TokenType::Dot) {
                 self.advance();
@@ -148,7 +156,8 @@ impl Parser {
                     member_tok.line,
                     member_tok.col,
                 );
-            } else if self.at(TokenType::LParen) {
+            } else if self.at(TokenType::LParen) && self.peek().line == callee_end_line {
+                // §5.15: `(` is on the same line as the callee → function call.
                 let span = self.current_span();
                 self.advance();
                 self.skip_newlines();
@@ -176,6 +185,32 @@ impl Parser {
                     },
                     span.line,
                     span.col,
+                );
+            } else {
+                break;
+            }
+        }
+        Ok(expr)
+    }
+
+    /// `member_access` production (§9) — dot access only, no function calls.
+    ///
+    /// Used by `is of` field extraction (§5.14).
+    pub(crate) fn parse_member_access(&mut self) -> Result<Node> {
+        let mut expr = self.parse_primary()?;
+        loop {
+            self.skip_newlines();
+            if self.at(TokenType::Dot) {
+                self.advance();
+                let member_tok = self.advance().clone();
+                let member = member_tok.value;
+                expr = Node::new(
+                    NodeKind::MemberAccess {
+                        object: Box::new(expr),
+                        member,
+                    },
+                    member_tok.line,
+                    member_tok.col,
                 );
             } else {
                 break;

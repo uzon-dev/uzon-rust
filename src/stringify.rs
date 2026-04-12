@@ -271,6 +271,12 @@ fn write_list(
         let inline = format_inline_list(list, depth, options, &mut st.clone());
         if inline.len() <= 80 {
             out.push_str(&inline);
+            // Emit type annotation for non-empty typed lists (needed for roundtrip)
+            if let Some(ref et) = list.element_type {
+                out.push_str(" as [");
+                out.push_str(et);
+                out.push(']');
+            }
             return;
         }
     }
@@ -287,6 +293,12 @@ fn write_list(
     }
     write_indent(out, depth, options);
     out.push(']');
+    // Emit type annotation for non-empty typed lists (needed for roundtrip)
+    if let Some(ref et) = list.element_type {
+        out.push_str(" as [");
+        out.push_str(et);
+        out.push(']');
+    }
 }
 
 fn format_inline_list(

@@ -58,15 +58,40 @@ impl Parser {
         })
     }
 
-    /// Parse tuple type: `(Type, Type, ...)`
+    /// Parse parenthesized type: grouping `(Type)` or tuple `(Type, Type, ...)` / `(Type,)`.
+    ///
+    /// §3.4.2: `(T)` is grouping (returns `T`), `(T,)` is a 1-tuple type.
     fn parse_tuple_type(&mut self, span: Span) -> Result<TypeExpr> {
-        self.advance();
+        self.advance(); // consume `(`
         self.skip_newlines();
         let first = self.parse_type_expr()?;
         self.skip_newlines();
+
+        // (Type) — grouping, not a tuple
+        if self.at(TokenType::RParen) {
+            self.advance();
+            return Ok(first);
+        }
+
+        // Comma required for tuple
         self.expect(TokenType::Comma)?;
         self.skip_newlines();
         let mut types = vec![first];
+
+        // (Type,) — 1-tuple (trailing comma after single type)
+        if self.at(TokenType::RParen) {
+            self.advance();
+            return Ok(TypeExpr {
+                path: Vec::new(),
+                is_list: false,
+                inner: None,
+                is_null: false,
+                tuple_types: Some(types),
+                span,
+            });
+        }
+
+        // 2+ element tuple: (Type, Type, ...)
         types.push(self.parse_type_expr()?);
         loop {
             self.skip_newlines();
@@ -75,7 +100,7 @@ impl Parser {
             }
             self.skip_newlines();
             if self.at(TokenType::RParen) {
-                break;
+                break; // trailing comma
             }
             types.push(self.parse_type_expr()?);
         }
