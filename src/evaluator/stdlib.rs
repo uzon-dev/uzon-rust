@@ -203,8 +203,8 @@ impl Evaluator {
         }
         let val = self.eval_std_arg(&args[0], "values", scope, exclude, node)?;
         match Self::unwrap_union_owned(val) {
-            Value::Struct(fields) => {
-                let vals: Vec<Value> = fields.into_values().collect();
+            Value::Struct(s) => {
+                let vals: Vec<Value> = s.fields.into_values().collect();
                 Ok(Value::Tuple(UzonTuple::new(vals)))
             }
             other => Err(UzonError::type_error(

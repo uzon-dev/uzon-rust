@@ -32,7 +32,7 @@ impl Evaluator {
             }
         }
 
-        Ok(Value::Struct(result))
+        Ok(Value::Struct(UzonStruct::new(result)))
     }
 
     pub(crate) fn eval_list_literal(
@@ -60,6 +60,52 @@ impl Evaluator {
                             ),
                             node.span.line, node.span.col,
                         ));
+                    }
+                }
+            }
+
+            // §3.4 + §3.2.1 rule 5: struct homogeneity in lists
+            let first_struct = vals.iter().find(|v| matches!(v, Value::Struct(_)));
+            if let Some(Value::Struct(first)) = first_struct {
+                for v in &vals {
+                    if let Value::Struct(s) = v {
+                        // Nominal type check
+                        match (&first.type_name, &s.type_name) {
+                            (Some(a), Some(b)) if a != b => {
+                                return Err(UzonError::type_error(
+                                    format!("list struct elements have mismatched named types: {} vs {}", a, b),
+                                    node.span.line, node.span.col,
+                                ));
+                            }
+                            (Some(a), None) | (None, Some(a)) => {
+                                return Err(UzonError::type_error(
+                                    format!("list struct elements mix named type {} with anonymous struct", a),
+                                    node.span.line, node.span.col,
+                                ));
+                            }
+                            _ => {}
+                        }
+                        // Structural check: fields must match
+                        let first_keys: Vec<&String> = first.keys().collect();
+                        let s_keys: Vec<&String> = s.keys().collect();
+                        if first_keys != s_keys {
+                            return Err(UzonError::type_error(
+                                format!("list struct elements have different fields: {:?} vs {:?}",
+                                    first_keys, s_keys),
+                                node.span.line, node.span.col,
+                            ));
+                        }
+                        for (k, fv) in first.iter() {
+                            if let Some(sv) = s.get(k) {
+                                if !fv.is_null() && !sv.is_null() && fv.type_name() != sv.type_name() {
+                                    return Err(UzonError::type_error(
+                                        format!("list struct field '{}' type mismatch: {} vs {}",
+                                            k, fv.type_name(), sv.type_name()),
+                                        node.span.line, node.span.col,
+                                    ));
+                                }
+                            }
+                        }
                     }
                 }
             }

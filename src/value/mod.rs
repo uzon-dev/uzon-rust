@@ -169,6 +169,59 @@ impl FromIterator<Value> for UzonList {
     }
 }
 
+/// A UZON struct value (§3.2).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UzonStruct {
+    pub fields: IndexMap<String, Value>,
+    /// Named type assigned via `called` or `as NamedStructType` (nominal type identity, §3.2.1 rule 5).
+    pub type_name: Option<String>,
+}
+
+impl UzonStruct {
+    pub fn new(fields: IndexMap<String, Value>) -> Self {
+        Self { fields, type_name: None }
+    }
+
+    pub fn with_type_name(fields: IndexMap<String, Value>, type_name: impl Into<String>) -> Self {
+        Self { fields, type_name: Some(type_name.into()) }
+    }
+}
+
+impl std::ops::Deref for UzonStruct {
+    type Target = IndexMap<String, Value>;
+    fn deref(&self) -> &IndexMap<String, Value> {
+        &self.fields
+    }
+}
+
+impl std::ops::DerefMut for UzonStruct {
+    fn deref_mut(&mut self) -> &mut IndexMap<String, Value> {
+        &mut self.fields
+    }
+}
+
+impl IntoIterator for UzonStruct {
+    type Item = (String, Value);
+    type IntoIter = indexmap::map::IntoIter<String, Value>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.fields.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a UzonStruct {
+    type Item = (&'a String, &'a Value);
+    type IntoIter = indexmap::map::Iter<'a, String, Value>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.fields.iter()
+    }
+}
+
+impl FromIterator<(String, Value)> for UzonStruct {
+    fn from_iter<I: IntoIterator<Item = (String, Value)>>(iter: I) -> Self {
+        Self::new(iter.into_iter().collect())
+    }
+}
+
 /// A UZON function value (closure) (§3.8).
 #[derive(Debug, Clone)]
 pub struct UzonFunction {
@@ -213,7 +266,7 @@ pub enum Value {
     String(String),
     List(UzonList),
     Tuple(UzonTuple),
-    Struct(IndexMap<String, Value>),
+    Struct(UzonStruct),
     Enum(UzonEnum),
     Union(UzonUnion),
     TaggedUnion(UzonTaggedUnion),
@@ -257,12 +310,12 @@ impl Value {
             Value::List(list) => {
                 Value::list(list.into_iter().map(|v| v.to_plain()).collect())
             }
-            Value::Struct(fields) => {
-                let mut result = IndexMap::with_capacity(fields.len());
-                for (k, v) in fields {
+            Value::Struct(s) => {
+                let mut result = IndexMap::with_capacity(s.fields.len());
+                for (k, v) in s.fields {
                     result.insert(k, v.to_plain());
                 }
-                Value::Struct(result)
+                Value::Struct(UzonStruct::new(result))
             }
             other => other,
         }

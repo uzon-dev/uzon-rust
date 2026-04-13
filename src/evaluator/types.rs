@@ -378,6 +378,8 @@ impl Evaluator {
                             }
                         }
                     }
+                    // §3.2.1 rule 5: stamp named type on the struct value
+                    val_fields.type_name = Some(type_name_str);
                 }
                 return Ok(val);
             } else {

@@ -345,6 +345,8 @@ fn write_tuple(
 }
 
 /// Write a struct `{ name is value, ... }`.
+/// §6.2: Types defined inside a struct are scoped to that struct.
+/// Use a cloned `st` so `called` definitions inside don't leak out.
 fn write_struct(
     out: &mut String,
     fields: &IndexMap<String, Value>,
@@ -365,9 +367,10 @@ fn write_struct(
         }
     }
 
+    let mut child_st = st.clone();
     out.push_str("{\n");
     for (name, value) in fields {
-        write_binding(out, name, value, depth + 1, options, st);
+        write_binding(out, name, value, depth + 1, options, &mut child_st);
     }
     write_indent(out, depth, options);
     out.push('}');
@@ -614,7 +617,7 @@ mod tests {
         fields.insert("x".into(), Value::int(1));
         fields.insert("y".into(), Value::int(2));
         let mut map = BTreeMap::new();
-        map.insert("point".into(), Value::Struct(fields));
+        map.insert("point".into(), Value::Struct(UzonStruct::new(fields)));
         let result = to_string(&map);
         assert!(result.contains("point is { x is 1, y is 2 }"));
     }
@@ -647,7 +650,7 @@ mod tests {
         let mut fields = IndexMap::new();
         fields.insert("is".into(), Value::int(1));
         let mut map = BTreeMap::new();
-        map.insert("s".into(), Value::Struct(fields));
+        map.insert("s".into(), Value::Struct(UzonStruct::new(fields)));
         let result = to_string(&map);
         assert!(result.contains("@is is 1"), "expected @is, got: {result}");
     }
@@ -663,7 +666,7 @@ mod tests {
     #[test]
     fn test_empty_struct() {
         let mut map = BTreeMap::new();
-        map.insert("s".into(), Value::Struct(IndexMap::new()));
+        map.insert("s".into(), Value::Struct(UzonStruct::new(IndexMap::new())));
         let result = to_string(&map);
         assert!(result.contains("s is {}"));
     }

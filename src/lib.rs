@@ -43,7 +43,7 @@ pub mod value;
 pub use error::{UzonError, Result};
 pub use evaluator::{from_str, from_str_plain, from_path, Evaluator, EvalOptions};
 pub use stringify::{to_string, to_string_with_options, StringifyOptions};
-pub use value::{Value, UzonInteger, UzonFloat, IntegerType, FloatType, UzonEnum, UzonUnion, UzonTaggedUnion, UzonTuple, UzonList, UzonFunction, UzonUndefined};
+pub use value::{Value, UzonInteger, UzonFloat, IntegerType, FloatType, UzonEnum, UzonUnion, UzonTaggedUnion, UzonTuple, UzonList, UzonStruct, UzonFunction, UzonUndefined};
 pub use value::ops::{ValueConversionError, ValueArithmeticError};
 pub use value::serde_impl::{from_value, DeError};
 
@@ -56,7 +56,7 @@ pub use value::serde_impl::{from_value, DeError};
 /// ```
 pub fn from_str_as<T: serde::de::DeserializeOwned>(source: &str) -> std::result::Result<T, String> {
     let values = from_str(source).map_err(|e| e.to_string())?;
-    let value = Value::Struct(values.into_iter().collect());
+    let value = Value::Struct(UzonStruct::new(values.into_iter().collect()));
     from_value(value).map_err(|e| e.to_string())
 }
 
@@ -102,7 +102,7 @@ macro_rules! uzon {
         $(
             fields.insert(String::from($key), uzon!($val));
         )*
-        $crate::Value::Struct(fields)
+        $crate::Value::Struct($crate::UzonStruct::new(fields))
     }};
 
     // list: [a, b, c]

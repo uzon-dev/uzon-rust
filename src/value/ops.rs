@@ -364,7 +364,7 @@ impl From<Vec<Value>> for Value {
 
 impl From<IndexMap<String, Value>> for Value {
     fn from(v: IndexMap<String, Value>) -> Self {
-        Value::Struct(v)
+        Value::Struct(crate::value::UzonStruct::new(v))
     }
 }
 
@@ -493,7 +493,7 @@ impl TryFrom<Value> for IndexMap<String, Value> {
     type Error = ValueConversionError;
     fn try_from(v: Value) -> Result<Self, Self::Error> {
         match v {
-            Value::Struct(m) => Ok(m),
+            Value::Struct(m) => Ok(m.fields),
             _ => Err(ValueConversionError { from: v.type_name(), to: "IndexMap<String, Value>" }),
         }
     }
@@ -882,7 +882,7 @@ impl StructBuilder {
 
     /// Finish building and return the `Value::Struct`.
     pub fn build(self) -> Value {
-        Value::Struct(self.fields)
+        Value::Struct(crate::value::UzonStruct::new(self.fields))
     }
 }
 
@@ -980,7 +980,7 @@ impl IntoIterator for Value {
         match self {
             Value::List(l) => ValueIntoIter::Vec(l.elements.into_iter()),
             Value::Tuple(t) => ValueIntoIter::Vec(t.elements.into_iter()),
-            Value::Struct(m) => ValueIntoIter::Map(m.into_values()),
+            Value::Struct(m) => ValueIntoIter::Map(m.fields.into_values()),
             _ => ValueIntoIter::Empty,
         }
     }
@@ -1062,7 +1062,7 @@ mod tests {
     fn test_as_struct() {
         let mut map = IndexMap::new();
         map.insert("x".into(), Value::int(1));
-        let v = Value::Struct(map);
+        let v = Value::Struct(crate::value::UzonStruct::new(map));
         assert!(v.as_struct().is_some());
         assert_eq!(Value::Null.as_struct(), None);
     }
@@ -1141,7 +1141,7 @@ mod tests {
     fn test_get_struct() {
         let mut map = IndexMap::new();
         map.insert("name".into(), Value::from("Alice"));
-        let v = Value::Struct(map);
+        let v = Value::Struct(crate::value::UzonStruct::new(map));
         assert_eq!(v.get("name"), Some(&Value::from("Alice")));
         assert_eq!(v.get("missing"), None);
         assert_eq!(Value::int(1).get("x"), None);
@@ -1159,7 +1159,7 @@ mod tests {
     fn test_get_mut() {
         let mut map = IndexMap::new();
         map.insert("x".into(), Value::int(1));
-        let mut v = Value::Struct(map);
+        let mut v = Value::Struct(crate::value::UzonStruct::new(map));
         *v.get_mut("x").unwrap() = Value::int(42);
         assert_eq!(v.get("x"), Some(&Value::int(42)));
     }
@@ -1170,9 +1170,9 @@ mod tests {
         inner.insert("host".into(), Value::from("localhost"));
         inner.insert("port".into(), Value::int(8080));
         let mut outer = IndexMap::new();
-        outer.insert("server".into(), Value::Struct(inner));
+        outer.insert("server".into(), Value::Struct(crate::value::UzonStruct::new(inner)));
         outer.insert("items".into(), Value::list(vec![Value::from("a"), Value::from("b")]));
-        let v = Value::Struct(outer);
+        let v = Value::Struct(crate::value::UzonStruct::new(outer));
 
         assert_eq!(v.get_path("server.host"), Some(&Value::from("localhost")));
         assert_eq!(v.get_path("server.port"), Some(&Value::int(8080)));
@@ -1190,7 +1190,7 @@ mod tests {
     fn test_index_struct() {
         let mut map = IndexMap::new();
         map.insert("name".into(), Value::String("Alice".into()));
-        let v = Value::Struct(map);
+        let v = Value::Struct(crate::value::UzonStruct::new(map));
         assert_eq!(v["name"], Value::String("Alice".into()));
         assert_eq!(v["missing"], Value::Null);
     }
@@ -1265,7 +1265,7 @@ mod tests {
     fn test_try_into_map() {
         let mut map = IndexMap::new();
         map.insert("x".into(), Value::int(1));
-        let m: IndexMap<String, Value> = Value::Struct(map).try_into().unwrap();
+        let m: IndexMap<String, Value> = Value::Struct(crate::value::UzonStruct::new(map)).try_into().unwrap();
         assert_eq!(m.len(), 1);
     }
 
@@ -1592,7 +1592,7 @@ mod tests {
         let mut map = IndexMap::new();
         map.insert("a".into(), Value::int(1));
         map.insert("b".into(), Value::int(2));
-        let v = Value::Struct(map);
+        let v = Value::Struct(crate::value::UzonStruct::new(map));
         let vals: Vec<&Value> = (&v).into_iter().collect();
         assert_eq!(vals, vec![&Value::int(1), &Value::int(2)]);
     }
@@ -1616,7 +1616,7 @@ mod tests {
         assert_eq!(Value::list(vec![Value::int(1), Value::int(2)]).len(), Some(2));
         let mut map = IndexMap::new();
         map.insert("x".into(), Value::int(1));
-        assert_eq!(Value::Struct(map).len(), Some(1));
+        assert_eq!(Value::Struct(crate::value::UzonStruct::new(map)).len(), Some(1));
         assert_eq!(Value::int(42).len(), None);
     }
 
@@ -1625,7 +1625,7 @@ mod tests {
         let mut map = IndexMap::new();
         map.insert("name".into(), Value::from("Alice"));
         map.insert("age".into(), Value::int(30));
-        let v = Value::Struct(map);
+        let v = Value::Struct(crate::value::UzonStruct::new(map));
         let fields: Vec<(&String, &Value)> = v.iter_fields().unwrap().collect();
         assert_eq!(fields[0].0, "name");
         assert_eq!(fields[1].0, "age");

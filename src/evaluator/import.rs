@@ -177,6 +177,10 @@ impl Evaluator {
                 f.type_name = Some(type_name.to_string());
                 Value::Function(f)
             }
+            Value::Struct(mut s) => {
+                s.type_name = Some(type_name.to_string());
+                Value::Struct(s)
+            }
             other => other,
         }
     }

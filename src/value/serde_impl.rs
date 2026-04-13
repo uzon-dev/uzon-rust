@@ -168,8 +168,8 @@ impl<'de> serde::Deserializer<'de> for ValueDeserializer {
                 let seq = SeqDeserializer::new(t.elements);
                 visitor.visit_seq(seq)
             }
-            Value::Struct(fields) => {
-                let map = MapDeserializer::new(fields);
+            Value::Struct(s) => {
+                let map = MapDeserializer::new(s.fields);
                 visitor.visit_map(map)
             }
             Value::Enum(e) => visitor.visit_string(e.value),
@@ -280,7 +280,7 @@ impl<'de> serde::Deserializer<'de> for ValueDeserializer {
 
     fn deserialize_map<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Self::Error> {
         match self.value {
-            Value::Struct(fields) => visitor.visit_map(MapDeserializer::new(fields)),
+            Value::Struct(s) => visitor.visit_map(MapDeserializer::new(s.fields)),
             _ => Err(DeError(format!("expected struct, got {}", self.value.type_name()))),
         }
     }
@@ -532,7 +532,7 @@ impl<'de> Visitor<'de> for ValueVisitor {
         while let Some((key, value)) = map.next_entry()? {
             fields.insert(key, value);
         }
-        Ok(Value::Struct(fields))
+        Ok(Value::Struct(crate::value::UzonStruct::new(fields)))
     }
 }
 
@@ -570,7 +570,7 @@ mod tests {
     fn test_serialize_struct() {
         let mut map = IndexMap::new();
         map.insert("a".into(), Value::Integer(UzonInteger::new(1)));
-        let v = Value::Struct(map);
+        let v = Value::Struct(crate::value::UzonStruct::new(map));
         assert_eq!(serde_json::to_string(&v).unwrap(), r#"{"a":1}"#);
     }
 
@@ -587,7 +587,7 @@ mod tests {
         fields.insert("host".into(), Value::String("localhost".into()));
         fields.insert("port".into(), Value::Integer(UzonInteger::new(8080)));
         fields.insert("debug".into(), Value::Bool(true));
-        let value = Value::Struct(fields);
+        let value = Value::Struct(crate::value::UzonStruct::new(fields));
 
         let config: Config = from_value(value).unwrap();
         assert_eq!(config, Config {
@@ -615,13 +615,13 @@ mod tests {
         server.insert("port".into(), Value::Integer(UzonInteger::new(3000)));
 
         let mut root = IndexMap::new();
-        root.insert("server".into(), Value::Struct(server));
+        root.insert("server".into(), Value::Struct(crate::value::UzonStruct::new(server)));
         root.insert("tags".into(), Value::List(UzonList::new(vec![
             Value::String("web".into()),
             Value::String("api".into()),
         ])));
 
-        let config: Config = from_value(Value::Struct(root)).unwrap();
+        let config: Config = from_value(Value::Struct(crate::value::UzonStruct::new(root))).unwrap();
         assert_eq!(config, Config {
             server: Server { host: "127.0.0.1".into(), port: 3000 },
             tags: vec!["web".into(), "api".into()],
@@ -639,7 +639,7 @@ mod tests {
         let mut fields = IndexMap::new();
         fields.insert("name".into(), Value::String("test".into()));
         fields.insert("label".into(), Value::Null);
-        let data: Data = from_value(Value::Struct(fields)).unwrap();
+        let data: Data = from_value(Value::Struct(crate::value::UzonStruct::new(fields))).unwrap();
         assert_eq!(data, Data { name: "test".into(), label: None });
     }
 
