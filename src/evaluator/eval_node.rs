@@ -104,6 +104,16 @@ impl Evaluator {
             }
 
             NodeKind::FunctionExpr { params, return_type, body_bindings, body_expr } => {
+                // §6.2: Validate parameter and return type names at definition time
+                for param in params {
+                    if let Some(type_name) = param.type_expr.path.last() {
+                        self.validate_type_exists(type_name, &param.type_expr, scope, node)?;
+                    }
+                }
+                if let Some(type_name) = return_type.path.last() {
+                    self.validate_type_exists(type_name, return_type, scope, node)?;
+                }
+
                 let captured = scope.to_map();
                 Ok(Value::Function(UzonFunction {
                     params: params.clone(),

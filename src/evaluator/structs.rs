@@ -19,12 +19,9 @@ impl Evaluator {
         let mut child_scope = Scope::with_parent(parent_scope.clone());
         self.eval_bindings(fields, &mut child_scope)?;
 
-        // Propagate type definitions from child to parent
-        for (name, td) in child_scope.local_types() {
-            if parent_scope.get_type(&name).is_none() {
-                parent_scope.define_type(name, td);
-            }
-        }
+        // §6.2: Types defined inside a struct are scoped to that struct.
+        // They are NOT propagated to the parent scope.
+        // External access requires a qualified path (e.g., `outer.Color`).
 
         let scope_map = child_scope.to_map();
         let mut result = IndexMap::with_capacity(fields.len());

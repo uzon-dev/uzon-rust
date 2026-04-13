@@ -94,6 +94,11 @@ impl Evaluator {
             }
         }
 
+        // §6.1: Validate type name exists before proceeding
+        if let Some(type_name) = type_expr.path.last() {
+            self.validate_type_exists(type_name, type_expr, scope, node)?;
+        }
+
         // Basic range checking for numeric types
         if let Some(type_name) = type_expr.path.last() {
             self.check_type_assertion(&val, type_name, node)?;
