@@ -171,9 +171,9 @@ impl Evaluator {
     /// Evaluate a single binding: validate, compute value, apply list type annotation,
     /// check constraints, and register into scope.
     fn eval_single_binding(&mut self, binding: &Binding, scope: &mut Scope) -> Result<()> {
-        // §3.1: literal `undefined` cannot be assigned to a binding
+        // §3.1 v0.8: literal `undefined` as binding value is a type error
         if matches!(binding.value.kind, NodeKind::UndefinedLiteral) {
-            return Err(UzonError::syntax(
+            return Err(UzonError::type_error(
                 "literal 'undefined' cannot be assigned to a binding; reference a missing name instead",
                 binding.value.span.line,
                 binding.value.span.col,

@@ -390,8 +390,9 @@ impl Evaluator {
             self.eval_node(&wc.value, scope, exclude)?
         };
 
+        // §5.10 v0.8: `when undefined` is a type error (not runtime)
         if when_val.is_undefined() {
-            return Err(UzonError::runtime(
+            return Err(UzonError::type_error(
                 "'when undefined' is not allowed; undefined is a state, not a matchable value",
                 wc.value.span.line, wc.value.span.col,
             ));

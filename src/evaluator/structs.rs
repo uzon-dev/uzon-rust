@@ -337,6 +337,13 @@ impl Evaluator {
                 Self::adopt_type_from_base(&base_map[&field.name], &mut new_val, &field.name, "plus", field.span.line, field.span.col)?;
                 result.insert(field.name.clone(), new_val);
             } else {
+                // §3.2.2 v0.8: new field evaluating to undefined is a runtime error
+                if new_val.is_undefined() {
+                    return Err(UzonError::runtime(
+                        format!("cannot add field '{}' with undefined value in 'plus'", field.name),
+                        field.span.line, field.span.col,
+                    ));
+                }
                 result.insert(field.name.clone(), new_val);
             }
         }
