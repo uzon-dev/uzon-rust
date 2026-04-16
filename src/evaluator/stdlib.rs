@@ -138,7 +138,37 @@ impl Evaluator {
         }
         let collection = self.eval_std_arg(&args[0], "get", scope, exclude, node)?;
         let key = self.eval_std_arg(&args[1], "get", scope, exclude, node)?;
-        match (Self::unwrap_union_owned(collection), key) {
+        let collection = Self::unwrap_union_owned(collection);
+        match (&collection, &key) {
+            (Value::Struct(_), Value::String(_)) => {}
+            (Value::Struct(_), _) => {
+                return Err(UzonError::type_error(
+                    format!("std.get key must be string for struct, got {}", key.type_name()),
+                    node.span.line, node.span.col,
+                ));
+            }
+            (Value::List(_), Value::Integer(_)) => {}
+            (Value::List(_), _) => {
+                return Err(UzonError::type_error(
+                    format!("std.get index must be integer for list, got {}", key.type_name()),
+                    node.span.line, node.span.col,
+                ));
+            }
+            (Value::Tuple(_), Value::Integer(_)) => {}
+            (Value::Tuple(_), _) => {
+                return Err(UzonError::type_error(
+                    format!("std.get index must be integer for tuple, got {}", key.type_name()),
+                    node.span.line, node.span.col,
+                ));
+            }
+            _ => {
+                return Err(UzonError::type_error(
+                    format!("std.get does not support {}", collection.type_name()),
+                    node.span.line, node.span.col,
+                ));
+            }
+        }
+        match (collection, key) {
             (Value::Struct(fields), Value::String(k)) => {
                 Ok(fields.get(&k).cloned().unwrap_or(Value::Undefined))
             }
@@ -150,10 +180,7 @@ impl Evaluator {
                 let i = idx.value as usize;
                 Ok(t.elements.get(i).cloned().unwrap_or(Value::Undefined))
             }
-            (other, _) => Err(UzonError::type_error(
-                format!("std.get does not support {}", other.type_name()),
-                node.span.line, node.span.col,
-            )),
+            _ => unreachable!(),
         }
     }
 
