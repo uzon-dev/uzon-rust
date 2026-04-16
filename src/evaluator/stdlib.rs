@@ -21,7 +21,7 @@ impl Evaluator {
     ) -> Result<Value> {
         match method {
             "len" => self.std_len(args, scope, exclude, node),
-            "has" => self.std_has(args, scope, exclude, node),
+            "hasKey" => self.std_has_key(args, scope, exclude, node),
             "get" => self.std_get(args, scope, exclude, node),
             "keys" => self.std_keys(args, scope, exclude, node),
             "values" => self.std_values(args, scope, exclude, node),
@@ -89,7 +89,9 @@ impl Evaluator {
         }
     }
 
-    fn std_has(
+    /// §5.16.1 v0.8: `std.hasKey(struct, key)` — struct key existence check.
+    /// List value checking removed (use `in` operator instead).
+    fn std_has_key(
         &mut self,
         args: &[Node],
         scope: &mut Scope,
@@ -97,40 +99,22 @@ impl Evaluator {
         node: &Node,
     ) -> Result<Value> {
         if args.len() != 2 {
-            return Err(UzonError::runtime("std.has requires exactly 2 arguments", node.span.line, node.span.col));
+            return Err(UzonError::runtime("std.hasKey requires exactly 2 arguments", node.span.line, node.span.col));
         }
-        let collection = self.eval_std_arg(&args[0], "has", scope, exclude, node)?;
-        let key = self.eval_std_arg(&args[1], "has", scope, exclude, node)?;
+        let collection = self.eval_std_arg(&args[0], "hasKey", scope, exclude, node)?;
+        let key = self.eval_std_arg(&args[1], "hasKey", scope, exclude, node)?;
         match Self::unwrap_union_owned(collection) {
             Value::Struct(fields) => {
                 match key {
                     Value::String(k) => Ok(Value::Bool(fields.contains_key(&k))),
                     other => Err(UzonError::type_error(
-                        format!("std.has key must be string for struct, got {}", other.type_name()),
+                        format!("std.hasKey key must be string, got {}", other.type_name()),
                         node.span.line, node.span.col,
                     )),
                 }
             }
-            Value::List(items) => {
-                // §5.16.1: value and element types MUST match (same rules as `in`)
-                // §5.8.1: null is exempt from type constraint on either side
-                if !key.is_null() && !items.is_empty() {
-                    let first_non_null = items.iter().find(|i| !i.is_null());
-                    if let Some(elem) = first_non_null {
-                        let elem_type = elem.type_name();
-                        let key_type = key.type_name();
-                        if elem_type != key_type {
-                            return Err(UzonError::type_error(
-                                format!("std.has type mismatch: list element type is {elem_type}, search value is {key_type}"),
-                                node.span.line, node.span.col,
-                            ));
-                        }
-                    }
-                }
-                Ok(Value::Bool(items.contains(&key)))
-            }
             other => Err(UzonError::type_error(
-                format!("std.has does not support {}", other.type_name()),
+                format!("std.hasKey requires struct, got {}", other.type_name()),
                 node.span.line, node.span.col,
             )),
         }

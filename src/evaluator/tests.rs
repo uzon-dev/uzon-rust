@@ -559,11 +559,11 @@ fn test_std_keys_values() {
 #[test]
 fn test_std_has() {
     assert_eq!(
-        eval_val("s is { a is 1 }\nx is std.has(s, \"a\")", "x"),
+        eval_val("s is { a is 1 }\nx is std.hasKey(s, \"a\")", "x"),
         Value::Bool(true)
     );
     assert_eq!(
-        eval_val("s is { a is 1 }\nx is std.has(s, \"b\")", "x"),
+        eval_val("s is { a is 1 }\nx is std.hasKey(s, \"b\")", "x"),
         Value::Bool(false)
     );
 }
