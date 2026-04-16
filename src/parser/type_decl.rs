@@ -177,21 +177,12 @@ impl Parser {
             self.skip_newlines();
             (value, self.parse_tagged_union_variants()?)
         } else if self.at(TokenType::As) {
-            // §6.3 type reuse: `value named tag as TypeName`
-            // Wrap value in TypeAnnotation to match evaluator's expected AST shape.
-            let as_span = self.current_span();
-            self.advance();
-            self.skip_newlines();
-            let type_expr = self.parse_type_expr()?;
-            let annotated = Node::new(
-                NodeKind::TypeAnnotation {
-                    expr: Box::new(value),
-                    type_expr,
-                },
-                as_span.line,
-                as_span.col,
-            );
-            (annotated, Vec::new())
+            // §6.3 v0.8: `as Type` MUST precede `named variant`.
+            // `value named tag as Type` is a syntax error — use `value as Type named tag`.
+            return Err(crate::error::UzonError::syntax(
+                "'as' must precede 'named'; use 'value as Type named variant' order",
+                self.current_span().line, self.current_span().col,
+            ));
         } else {
             (value, Vec::new())
         };
