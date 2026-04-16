@@ -204,16 +204,13 @@ impl Evaluator {
         // Spec §3.4: empty list or all-null list without type annotation is rejected
         Self::check_list_annotation_required(&value, binding)?;
 
-        // §3.2: Duplicate binding names are forbidden UNLESS the new binding
-        // references its own name (own-name exclusion pattern, §5.12).
+        // §3.2: Duplicate binding names in the same scope are forbidden.
         if scope.has(&binding.name) {
-            if !Self::expr_references_name(&binding.value, &binding.name) {
-                return Err(UzonError::syntax(
-                    format!("duplicate binding '{}' in the same scope", binding.name),
-                    binding.span.line,
-                    binding.span.col,
-                ));
-            }
+            return Err(UzonError::syntax(
+                format!("duplicate binding '{}' in the same scope", binding.name),
+                binding.span.line,
+                binding.span.col,
+            ));
         }
 
         // Set type_name on enum/union/tagged-union values when `called` is present
@@ -312,12 +309,10 @@ impl Evaluator {
                 return Ok(());
             }
             if list.is_empty() {
-                if matches!(binding.value.kind, NodeKind::ListLiteral { ref elements } if elements.is_empty()) {
-                    return Err(UzonError::type_error(
-                        "empty list requires a type annotation: [] as [Type]",
-                        binding.value.span.line, binding.value.span.col,
-                    ));
-                }
+                return Err(UzonError::type_error(
+                    "empty list requires a type annotation: [] as [Type]",
+                    binding.value.span.line, binding.value.span.col,
+                ));
             }
             // §3.4: all-null list without type annotation requires as [Type]
             if !list.is_empty() && list.iter().all(|v| v.is_null()) {
