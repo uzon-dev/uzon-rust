@@ -242,7 +242,7 @@ impl Evaluator {
         // §3.7.1: tagged unions are transparent for case type (not in exceptions list).
         // For unions/tagged unions, collect valid member types for when-clause validation.
         let (actual_type, valid_types): (String, Option<Vec<String>>) = match scrut_val {
-            Value::Union(u) => (Self::specific_type_name(&u.value), Some(u.types.clone())),
+            Value::Union(u) => (Self::compound_type_name(&u.value), Some(u.types.clone())),
             Value::TaggedUnion(tu) => {
                 // §5.10: for tagged unions, valid types are the set of distinct inner types
                 // across all variants.
@@ -254,9 +254,9 @@ impl Evaluator {
                         .cloned()
                         .collect()
                 };
-                (Self::specific_type_name(&tu.value), Some(inner_types))
+                (Self::compound_type_name(&tu.value), Some(inner_types))
             }
-            other => (Self::specific_type_name(other), None),
+            other => (Self::compound_type_name(other), None),
         };
 
         // For narrowing: extract scrutinee name and unwrapped inner value.

@@ -345,12 +345,40 @@ impl Evaluator {
         }
     }
 
+    /// §5.10 v0.8: Return the compound type name for `case type` matching.
+    /// Includes element types for lists and tuples: `[i32]`, `(i32, string)`.
+    pub(crate) fn compound_type_name(val: &Value) -> String {
+        match val {
+            Value::List(list) => {
+                if let Some(ref et) = list.element_type {
+                    return format!("[{et}]");
+                }
+                let elem = list.elements.iter().find(|v| !v.is_null());
+                if let Some(e) = elem {
+                    format!("[{}]", Self::specific_type_name(e))
+                } else {
+                    "list".to_string()
+                }
+            }
+            Value::Tuple(t) => {
+                if t.elements.is_empty() {
+                    return "tuple".to_string();
+                }
+                let parts: Vec<String> = t.elements.iter()
+                    .map(|e| Self::specific_type_name(e))
+                    .collect();
+                format!("({})", parts.join(", "))
+            }
+            other => Self::specific_type_name(other),
+        }
+    }
+
     /// §5.10/§D.5: Create a zero-value for a given type name for speculative evaluation
     /// in narrowed scope. If the type matches the actual narrowed value, use that; otherwise
     /// create a representative value for the type.
     pub(crate) fn create_narrowed_value_for_type(&self, type_name: &str, actual: &Value) -> Value {
         // If the actual value already matches this type, use it directly
-        if Self::specific_type_name(actual) == type_name {
+        if Self::compound_type_name(actual) == type_name {
             return actual.clone();
         }
         // Create a zero-value for the requested type
@@ -358,6 +386,15 @@ impl Evaluator {
             "bool" => Value::Bool(false),
             "string" => Value::String(String::new()),
             "null" => Value::Null,
+            _ if type_name.starts_with('[') && type_name.ends_with(']') => {
+                // Compound list type like [i32] — create an empty list with element_type
+                let inner = &type_name[1..type_name.len()-1];
+                Value::List(UzonList { elements: vec![], element_type: Some(inner.to_string()) })
+            }
+            _ if type_name.starts_with('(') && type_name.ends_with(')') => {
+                // Compound tuple type like (i32, string) — create an empty tuple
+                Value::Tuple(UzonTuple { elements: vec![] })
+            }
             _ if IntegerType::from_type_name(type_name).is_some() => {
                 let it = IntegerType::from_type_name(type_name).unwrap();
                 Value::Integer(UzonInteger::with_type(0, it))

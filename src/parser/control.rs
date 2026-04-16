@@ -7,6 +7,24 @@ use crate::token::TokenType;
 
 use super::Parser;
 
+/// Convert a TypeExpr to its string representation for `case type` matching.
+fn type_expr_to_string(te: &TypeExpr) -> String {
+    if te.is_null {
+        return "null".to_string();
+    }
+    if te.is_list {
+        if let Some(ref inner) = te.inner {
+            return format!("[{}]", type_expr_to_string(inner));
+        }
+        return "list".to_string();
+    }
+    if let Some(ref types) = te.tuple_types {
+        let parts: Vec<String> = types.iter().map(|t| type_expr_to_string(t)).collect();
+        return format!("({})", parts.join(", "));
+    }
+    te.path.join(".")
+}
+
 impl Parser {
     /// Parse `if condition then expr else expr` (§5.9).
     pub(crate) fn parse_if_expr(&mut self) -> Result<Node> {
@@ -89,11 +107,13 @@ impl Parser {
                     )
                 }
                 CaseMode::Type => {
-                    let name_tok = self.advance().clone();
+                    // §5.10 v0.8: compound type expressions allowed: [i32], (i32, string), etc.
+                    let type_expr = self.parse_type_expr()?;
+                    let name = type_expr_to_string(&type_expr);
                     Node::new(
-                        NodeKind::Identifier { name: name_tok.value },
-                        name_tok.line,
-                        name_tok.col,
+                        NodeKind::Identifier { name },
+                        when_span.line,
+                        when_span.col,
                     )
                 }
                 CaseMode::Value => self.parse_expression()?,

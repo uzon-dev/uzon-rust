@@ -101,7 +101,7 @@ impl Evaluator {
         {
             let mut seen = std::collections::HashSet::new();
             for t in types {
-                let name = t.path.join(".");
+                let name = Self::format_type_expr(t);
                 if !seen.insert(name.clone()) {
                     return Err(UzonError::type_error(
                         format!("duplicate union member type '{name}'"),
@@ -112,7 +112,7 @@ impl Evaluator {
         }
 
         let mut val = self.eval_node(value, scope, exclude)?;
-        let type_names: Vec<String> = types.iter().map(|t| t.path.join(".")).collect();
+        let type_names: Vec<String> = types.iter().map(|t| Self::format_type_expr(t)).collect();
 
         // Adopt matching member type for untyped numeric values so that
         // `42 from union i32, string` stores the inner value as i32.
@@ -122,6 +122,7 @@ impl Evaluator {
     }
 
     /// For untyped numeric values, adopt the matching union member type.
+    /// Also handles compound types: lists adopt element types from `[Type]` members.
     fn adopt_union_member_type(val: &mut Value, type_names: &[String]) {
         match val {
             Value::Integer(n) if !n.explicit => {
@@ -139,6 +140,37 @@ impl Evaluator {
                         f.type_ann = ft;
                         f.explicit = true;
                         return;
+                    }
+                }
+            }
+            Value::List(list) if list.element_type.is_none() => {
+                // Find a matching [Type] member and adopt element type
+                for tn in type_names {
+                    if tn.starts_with('[') && tn.ends_with(']') {
+                        let inner = &tn[1..tn.len()-1];
+                        // Check if elements are compatible with this inner type
+                        let compatible = list.elements.iter().all(|e| {
+                            if e.is_null() { return true; }
+                            match e {
+                                Value::Integer(n) if !n.explicit => {
+                                    IntegerType::from_type_name(inner).is_some()
+                                }
+                                Value::Float(f) if !f.explicit => {
+                                    FloatType::from_type_name(inner).is_some()
+                                }
+                                Value::Integer(n) => n.type_ann.display_name() == inner,
+                                Value::Float(f) => f.type_ann.display_name() == inner,
+                                other => other.type_name() == inner,
+                            }
+                        });
+                        if compatible {
+                            list.element_type = Some(inner.to_string());
+                            // Adopt element types too
+                            for elem in &mut list.elements {
+                                Self::adopt_union_member_type(elem, &[inner.to_string()]);
+                            }
+                            return;
+                        }
                     }
                 }
             }
