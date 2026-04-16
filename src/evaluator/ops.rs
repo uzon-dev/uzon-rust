@@ -301,6 +301,13 @@ impl Evaluator {
         }
         let lv = Self::unwrap_union_owned(lv);
         let rv = Self::unwrap_union_owned(rv);
+        // §3.8: function equality is always a type error
+        if matches!(&lv, Value::Function(_)) {
+            return Err(UzonError::type_error(
+                "function values cannot be compared with 'in'",
+                node.span.line, node.span.col,
+            ));
+        }
         match rv {
             Value::List(items) => {
                 if !lv.is_null() && !items.is_empty() {
@@ -530,7 +537,7 @@ impl Evaluator {
         };
         // For unions (tagged or untagged), check the inner value's type
         let inner = Self::unwrap_union(&lv);
-        let actual_type = Self::specific_type_name(inner);
+        let actual_type = Self::compound_type_name(inner);
         let matches = actual_type == type_name;
         Ok(Value::Bool(if op == BinaryOp::IsType { matches } else { !matches }))
     }

@@ -106,7 +106,7 @@ impl Evaluator {
                         .find(|b| b.name == cycle_path[0])
                         .map(|b| b.span)
                         .unwrap_or(Span { line: 0, col: 0 });
-                    return Err(UzonError::type_error(
+                    return Err(UzonError::circular(
                         format!("recursive function call detected: {}", cycle_path.join(" → ")),
                         span.line, span.col,
                     ));

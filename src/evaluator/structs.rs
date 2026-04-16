@@ -319,6 +319,8 @@ impl Evaluator {
         }
 
         let mut result = base_map.clone();
+        // §3.2.2: plus always produces a new type — strip named type from base
+        result.type_name = None;
 
         for field in ext_fields {
             let new_val = self.eval_node(&field.value, scope, exclude)?;
@@ -332,7 +334,7 @@ impl Evaluator {
                         field.span.line, field.span.col,
                     ));
                 }
-                Self::check_override_type_compat(old_val, &new_val, &field.name, &field.value.kind, "plus", false, field.span.line, field.span.col)?;
+                Self::check_override_type_compat(old_val, &new_val, &field.name, &field.value.kind, "plus", true, field.span.line, field.span.col)?;
                 let mut new_val = new_val;
                 Self::adopt_type_from_base(&base_map[&field.name], &mut new_val, &field.name, "plus", field.span.line, field.span.col)?;
                 result.insert(field.name.clone(), new_val);

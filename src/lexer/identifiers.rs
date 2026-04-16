@@ -236,7 +236,7 @@ impl Lexer {
         }
 
         // Keywords cannot be quoted — use @keyword escape instead (§2.3)
-        if is_keyword(&name) {
+        if is_keyword(&name) || crate::token::is_reserved_keyword(&name) {
             return Err(UzonError::syntax(
                 format!("quoted identifier '{name}' is a keyword; use @{name} to escape"),
                 start_line,

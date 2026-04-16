@@ -8,7 +8,7 @@ use crate::token::TokenType;
 use super::Parser;
 
 /// Convert a TypeExpr to its string representation for `case type` matching.
-fn type_expr_to_string(te: &TypeExpr) -> String {
+pub(super) fn type_expr_to_string(te: &TypeExpr) -> String {
     if te.is_null {
         return "null".to_string();
     }

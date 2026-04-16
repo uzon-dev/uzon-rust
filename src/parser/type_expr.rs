@@ -64,6 +64,20 @@ impl Parser {
     fn parse_tuple_type(&mut self, span: Span) -> Result<TypeExpr> {
         self.advance(); // consume `(`
         self.skip_newlines();
+
+        // () — empty tuple type
+        if self.at(TokenType::RParen) {
+            self.advance();
+            return Ok(TypeExpr {
+                path: Vec::new(),
+                is_list: false,
+                inner: None,
+                is_null: false,
+                tuple_types: Some(Vec::new()),
+                span,
+            });
+        }
+
         let first = self.parse_type_expr()?;
         self.skip_newlines();
 

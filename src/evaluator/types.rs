@@ -553,7 +553,7 @@ impl Evaluator {
             if type_name == "string" {
                 let inner = &tu.value;
                 match inner.as_ref() {
-                    Value::Struct(_) | Value::List(_) | Value::Tuple(_) => {
+                    Value::Struct(_) | Value::List(_) | Value::Tuple(_) | Value::Function(_) => {
                         return Err(UzonError::type_error(
                             format!("cannot convert tagged union (inner type {}) to string", inner.type_name()),
                             node.span.line, node.span.col,
@@ -574,7 +574,7 @@ impl Evaluator {
             if type_name == "string" {
                 let inner = &u.value;
                 match inner.as_ref() {
-                    Value::Struct(_) | Value::List(_) | Value::Tuple(_) => {
+                    Value::Struct(_) | Value::List(_) | Value::Tuple(_) | Value::Function(_) => {
                         return Err(UzonError::type_error(
                             format!("cannot convert union (inner type {}) to string", inner.type_name()),
                             node.span.line, node.span.col,

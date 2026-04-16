@@ -6,6 +6,7 @@ use crate::error::Result;
 use crate::token::TokenType;
 
 use super::Parser;
+use super::control::type_expr_to_string;
 
 impl Parser {
     // === Expressions (precedence climbing) ===
@@ -246,17 +247,17 @@ impl Parser {
                 let span = self.current_span();
                 self.advance();
                 self.skip_newlines();
-                let name_tok = self.advance().clone();
+                let type_span = self.current_span();
+                let type_expr = self.parse_type_expr()?;
+                let name = type_expr_to_string(&type_expr);
                 Ok(Node::new(
                     NodeKind::BinaryOp {
                         op: BinaryOp::IsType,
                         left: Box::new(left),
                         right: Box::new(Node::new(
-                            NodeKind::Identifier {
-                                name: name_tok.value,
-                            },
-                            name_tok.line,
-                            name_tok.col,
+                            NodeKind::Identifier { name },
+                            type_span.line,
+                            type_span.col,
                         )),
                     },
                     span.line,
@@ -267,17 +268,17 @@ impl Parser {
                 let span = self.current_span();
                 self.advance();
                 self.skip_newlines();
-                let name_tok = self.advance().clone();
+                let type_span = self.current_span();
+                let type_expr = self.parse_type_expr()?;
+                let name = type_expr_to_string(&type_expr);
                 Ok(Node::new(
                     NodeKind::BinaryOp {
                         op: BinaryOp::IsNotType,
                         left: Box::new(left),
                         right: Box::new(Node::new(
-                            NodeKind::Identifier {
-                                name: name_tok.value,
-                            },
-                            name_tok.line,
-                            name_tok.col,
+                            NodeKind::Identifier { name },
+                            type_span.line,
+                            type_span.col,
                         )),
                     },
                     span.line,
