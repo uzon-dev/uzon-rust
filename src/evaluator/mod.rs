@@ -588,9 +588,12 @@ pub fn from_path(path: &Path) -> Result<BTreeMap<String, Value>> {
         .map_err(|e| e.with_filename(fname.clone()))?;
     let doc = Parser::new(tokens, comment_lines).parse()
         .map_err(|e| e.with_filename(fname.clone()))?;
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let mut eval = Evaluator::new(EvalOptions {
-        filename: Some(path.to_path_buf()),
+        filename: Some(canonical.clone()),
         ..Default::default()
     });
+    // Push entry file to import_stack so self-imports are detected immediately
+    eval.import_stack.push(canonical);
     eval.evaluate(&doc).map_err(|e| e.with_filename(fname))
 }

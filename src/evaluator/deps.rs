@@ -58,14 +58,15 @@ impl Evaluator {
         }
 
         if result.len() != bindings.len() {
-            let in_cycle: Vec<&str> = (0..bindings.len())
+            let cycle_indices: Vec<usize> = (0..bindings.len())
                 .filter(|&i| in_deg[i] > 0)
-                .map(|i| names[i])
                 .collect();
+            let in_cycle: Vec<&str> = cycle_indices.iter().map(|&i| names[i]).collect();
+            let first = cycle_indices[0];
             return Err(UzonError::circular(
                 format!("circular dependency among: {}", in_cycle.join(", ")),
-                bindings[0].span.line,
-                bindings[0].span.col,
+                bindings[first].span.line,
+                bindings[first].span.col,
             ));
         }
 
