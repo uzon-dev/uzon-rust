@@ -41,10 +41,22 @@ impl Evaluator {
             BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
                 let lv = self.eval_node(left, scope, exclude)?;
                 let rv = self.eval_node(right, scope, exclude)?;
-                // §5.4: ordered comparison between two tagged union values is a type error
+                // §5.4 v0.8: ordered comparison on tagged unions, untagged unions, or functions → type error
                 if matches!((&lv, &rv), (Value::TaggedUnion(_), Value::TaggedUnion(_))) {
                     return Err(UzonError::type_error(
                         "ordered comparison between two tagged unions is a type error — tags have no defined ordering",
+                        node.span.line, node.span.col,
+                    ));
+                }
+                if matches!(&lv, Value::Union(_)) || matches!(&rv, Value::Union(_)) {
+                    return Err(UzonError::type_error(
+                        "ordered comparison on untagged union is a type error",
+                        node.span.line, node.span.col,
+                    ));
+                }
+                if matches!(&lv, Value::Function(_)) || matches!(&rv, Value::Function(_)) {
+                    return Err(UzonError::type_error(
+                        "ordered comparison on functions is a type error",
                         node.span.line, node.span.col,
                     ));
                 }
@@ -168,7 +180,54 @@ impl Evaluator {
             }
         }
 
-        // §3.6: untagged unions transparent for is/is not
+        // §3.6 v0.8: union-to-union comparison
+        if let (Value::Union(lu), Value::Union(ru)) = (&lv, &rv) {
+            // Check union type identity
+            match (&lu.type_name, &ru.type_name) {
+                // Both named: nominal identity
+                (Some(a), Some(b)) if a != b => {
+                    return Err(UzonError::type_error(
+                        format!("'is'/'is not' requires same union type, got {} and {}", a, b),
+                        node.span.line, node.span.col,
+                    ));
+                }
+                // One named, one anonymous: different types
+                (Some(a), None) | (None, Some(a)) => {
+                    return Err(UzonError::type_error(
+                        format!("'is'/'is not' requires same union type, {} vs anonymous union", a),
+                        node.span.line, node.span.col,
+                    ));
+                }
+                // Both anonymous: structural identity (member set, order-independent)
+                (None, None) => {
+                    let mut l_types = lu.types.clone();
+                    let mut r_types = ru.types.clone();
+                    l_types.sort();
+                    r_types.sort();
+                    if l_types != r_types {
+                        return Err(UzonError::type_error(
+                            format!("'is'/'is not' requires same union type, got union {:?} and union {:?}",
+                                lu.types, ru.types),
+                            node.span.line, node.span.col,
+                        ));
+                    }
+                }
+                _ => {} // Both named and matching
+            }
+            // Same union type: compare inner values
+            let lv_inner = Self::unwrap_union_owned(lv);
+            let rv_inner = Self::unwrap_union_owned(rv);
+            // Different runtime types → false (not error)
+            if lv_inner.type_name() != rv_inner.type_name()
+                && !can_adopt_cross_category(&lv_inner, &rv_inner)
+            {
+                return Ok(Value::Bool(op != BinaryOp::Is));
+            }
+            let eq = values_equal(&lv_inner, &rv_inner);
+            return Ok(Value::Bool(if op == BinaryOp::Is { eq } else { !eq }));
+        }
+
+        // §3.6: untagged unions transparent for is/is not with non-union values
         let lv = if matches!(&lv, Value::Union(_)) { Self::unwrap_union_owned(lv) } else { lv };
         let rv = if matches!(&rv, Value::Union(_)) { Self::unwrap_union_owned(rv) } else { rv };
 
