@@ -38,6 +38,12 @@ impl Evaluator {
             "lower" => self.std_lower(args, scope, exclude, node),
             "upper" => self.std_upper(args, scope, exclude, node),
             "join" => self.std_join(args, scope, exclude, node),
+            "reverse" => self.std_reverse(args, scope, exclude, node),
+            "all" => self.std_all(args, scope, exclude, node),
+            "any" => self.std_any(args, scope, exclude, node),
+            "contains" => self.std_contains(args, scope, exclude, node),
+            "startsWith" => self.std_starts_with(args, scope, exclude, node),
+            "endsWith" => self.std_ends_with(args, scope, exclude, node),
             _ => Err(UzonError::runtime(
                 format!("unknown standard library function: std.{method}"),
                 node.span.line, node.span.col,
@@ -490,6 +496,168 @@ impl Evaluator {
             }
             other => Err(UzonError::type_error(
                 format!("std.join first argument must be a list, got {}", other.type_name()),
+                node.span.line, node.span.col,
+            )),
+        }
+    }
+
+    // §5.16 v0.8: new stdlib functions
+
+    fn std_reverse(
+        &mut self, args: &[Node], scope: &mut Scope, exclude: Option<&str>, node: &Node,
+    ) -> Result<Value> {
+        if args.len() != 1 {
+            return Err(UzonError::runtime("std.reverse requires exactly 1 argument", node.span.line, node.span.col));
+        }
+        let val = self.eval_std_arg(&args[0], "reverse", scope, exclude, node)?;
+        match Self::unwrap_union_owned(val) {
+            Value::List(items) => {
+                let mut elements = items.elements;
+                elements.reverse();
+                Ok(Value::List(UzonList { elements, element_type: items.element_type }))
+            }
+            Value::String(s) => {
+                Ok(Value::String(s.chars().rev().collect()))
+            }
+            other => Err(UzonError::type_error(
+                format!("std.reverse requires list or string, got {}", other.type_name()),
+                node.span.line, node.span.col,
+            )),
+        }
+    }
+
+    fn std_all(
+        &mut self, args: &[Node], scope: &mut Scope, exclude: Option<&str>, node: &Node,
+    ) -> Result<Value> {
+        if args.len() != 2 {
+            return Err(UzonError::runtime("std.all requires exactly 2 arguments", node.span.line, node.span.col));
+        }
+        let list = self.eval_std_arg(&args[0], "all", scope, exclude, node)?;
+        let func_val = self.eval_std_arg(&args[1], "all", scope, exclude, node)?;
+        let func = match func_val {
+            Value::Function(f) => f,
+            _ => return Err(UzonError::type_error(
+                format!("std.all second argument must be a function, got {}", func_val.type_name()),
+                node.span.line, node.span.col,
+            )),
+        };
+        let items = match Self::unwrap_union_owned(list) {
+            Value::List(items) => items,
+            other => return Err(UzonError::type_error(
+                format!("std.all first argument must be a list, got {}", other.type_name()),
+                node.span.line, node.span.col,
+            )),
+        };
+        // Empty list → true
+        for item in items {
+            let result = self.call_function(&func, vec![item], node)?;
+            match Self::unwrap_union_owned(result) {
+                Value::Bool(false) => return Ok(Value::Bool(false)),
+                Value::Bool(true) => {}
+                other => return Err(UzonError::type_error(
+                    format!("std.all predicate must return bool, got {}", other.type_name()),
+                    node.span.line, node.span.col,
+                )),
+            }
+        }
+        Ok(Value::Bool(true))
+    }
+
+    fn std_any(
+        &mut self, args: &[Node], scope: &mut Scope, exclude: Option<&str>, node: &Node,
+    ) -> Result<Value> {
+        if args.len() != 2 {
+            return Err(UzonError::runtime("std.any requires exactly 2 arguments", node.span.line, node.span.col));
+        }
+        let list = self.eval_std_arg(&args[0], "any", scope, exclude, node)?;
+        let func_val = self.eval_std_arg(&args[1], "any", scope, exclude, node)?;
+        let func = match func_val {
+            Value::Function(f) => f,
+            _ => return Err(UzonError::type_error(
+                format!("std.any second argument must be a function, got {}", func_val.type_name()),
+                node.span.line, node.span.col,
+            )),
+        };
+        let items = match Self::unwrap_union_owned(list) {
+            Value::List(items) => items,
+            other => return Err(UzonError::type_error(
+                format!("std.any first argument must be a list, got {}", other.type_name()),
+                node.span.line, node.span.col,
+            )),
+        };
+        // Empty list → false
+        for item in items {
+            let result = self.call_function(&func, vec![item], node)?;
+            match Self::unwrap_union_owned(result) {
+                Value::Bool(true) => return Ok(Value::Bool(true)),
+                Value::Bool(false) => {}
+                other => return Err(UzonError::type_error(
+                    format!("std.any predicate must return bool, got {}", other.type_name()),
+                    node.span.line, node.span.col,
+                )),
+            }
+        }
+        Ok(Value::Bool(false))
+    }
+
+    fn std_contains(
+        &mut self, args: &[Node], scope: &mut Scope, exclude: Option<&str>, node: &Node,
+    ) -> Result<Value> {
+        if args.len() != 2 {
+            return Err(UzonError::runtime("std.contains requires exactly 2 arguments", node.span.line, node.span.col));
+        }
+        let input = self.eval_std_arg(&args[0], "contains", scope, exclude, node)?;
+        let substr = self.eval_std_arg(&args[1], "contains", scope, exclude, node)?;
+        match (Self::unwrap_union_owned(input), Self::unwrap_union_owned(substr)) {
+            (Value::String(s), Value::String(sub)) => Ok(Value::Bool(s.contains(&sub))),
+            (Value::String(_), other) => Err(UzonError::type_error(
+                format!("std.contains second argument must be string, got {}", other.type_name()),
+                node.span.line, node.span.col,
+            )),
+            (other, _) => Err(UzonError::type_error(
+                format!("std.contains first argument must be string, got {}", other.type_name()),
+                node.span.line, node.span.col,
+            )),
+        }
+    }
+
+    fn std_starts_with(
+        &mut self, args: &[Node], scope: &mut Scope, exclude: Option<&str>, node: &Node,
+    ) -> Result<Value> {
+        if args.len() != 2 {
+            return Err(UzonError::runtime("std.startsWith requires exactly 2 arguments", node.span.line, node.span.col));
+        }
+        let input = self.eval_std_arg(&args[0], "startsWith", scope, exclude, node)?;
+        let prefix = self.eval_std_arg(&args[1], "startsWith", scope, exclude, node)?;
+        match (Self::unwrap_union_owned(input), Self::unwrap_union_owned(prefix)) {
+            (Value::String(s), Value::String(p)) => Ok(Value::Bool(s.starts_with(&p))),
+            (Value::String(_), other) => Err(UzonError::type_error(
+                format!("std.startsWith second argument must be string, got {}", other.type_name()),
+                node.span.line, node.span.col,
+            )),
+            (other, _) => Err(UzonError::type_error(
+                format!("std.startsWith first argument must be string, got {}", other.type_name()),
+                node.span.line, node.span.col,
+            )),
+        }
+    }
+
+    fn std_ends_with(
+        &mut self, args: &[Node], scope: &mut Scope, exclude: Option<&str>, node: &Node,
+    ) -> Result<Value> {
+        if args.len() != 2 {
+            return Err(UzonError::runtime("std.endsWith requires exactly 2 arguments", node.span.line, node.span.col));
+        }
+        let input = self.eval_std_arg(&args[0], "endsWith", scope, exclude, node)?;
+        let suffix = self.eval_std_arg(&args[1], "endsWith", scope, exclude, node)?;
+        match (Self::unwrap_union_owned(input), Self::unwrap_union_owned(suffix)) {
+            (Value::String(s), Value::String(suf)) => Ok(Value::Bool(s.ends_with(&suf))),
+            (Value::String(_), other) => Err(UzonError::type_error(
+                format!("std.endsWith second argument must be string, got {}", other.type_name()),
+                node.span.line, node.span.col,
+            )),
+            (other, _) => Err(UzonError::type_error(
+                format!("std.endsWith first argument must be string, got {}", other.type_name()),
                 node.span.line, node.span.col,
             )),
         }
