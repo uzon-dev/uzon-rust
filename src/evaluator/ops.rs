@@ -221,6 +221,7 @@ impl Evaluator {
         scope: &mut Scope, exclude: Option<&str>, node: &Node,
     ) -> Result<Value> {
         let rv = self.eval_node(right, scope, exclude)?;
+        // §3.5 rule 4: enum type-context inference — list elements only (not tuple/struct)
         let lv = if let Value::List(ref items) = rv {
             let first_enum = items.iter().find_map(|item| {
                 if let Value::Enum(e) = item { Some(e) } else { None }
@@ -265,50 +266,75 @@ impl Evaluator {
                             }
                         }
                         // D.3: numeric type_ann compatibility
-                        match (&lv, elem) {
-                            (Value::Integer(li), Value::Integer(ei)) => {
-                                if li.explicit && li.type_ann != ei.type_ann {
-                                    return Err(UzonError::type_error(
-                                        format!("'in' requires value and list elements to be the same type, got {} and {}",
-                                            li.type_ann.display_name(), ei.type_ann.display_name()),
-                                        node.span.line, node.span.col,
-                                    ));
-                                }
-                                if ei.explicit && !li.explicit && li.type_ann != ei.type_ann {
-                                    // untyped adopts typed → ok
-                                } else if let Err(msg) = UzonInteger::adopt_type(&li.type_ann, &ei.type_ann) {
-                                    return Err(UzonError::type_error(
-                                        format!("'in' requires value and list elements to be the same type: {msg}"),
-                                        node.span.line, node.span.col,
-                                    ));
-                                }
-                            }
-                            (Value::Float(lf), Value::Float(ef)) => {
-                                if lf.explicit && lf.type_ann != ef.type_ann {
-                                    return Err(UzonError::type_error(
-                                        format!("'in' requires value and list elements to be the same type, got {} and {}",
-                                            lf.type_ann.display_name(), ef.type_ann.display_name()),
-                                        node.span.line, node.span.col,
-                                    ));
-                                }
-                                if ef.explicit && !lf.explicit && lf.type_ann != ef.type_ann {
-                                    // untyped adopts typed → ok
-                                } else if let Err(msg) = UzonFloat::adopt_type(&lf.type_ann, &ef.type_ann) {
-                                    return Err(UzonError::type_error(
-                                        format!("'in' requires value and list elements to be the same type: {msg}"),
-                                        node.span.line, node.span.col,
-                                    ));
-                                }
-                            }
-                            _ => {}
-                        }
+                        Self::check_in_numeric_compat(&lv, elem, node)?;
                     }
                 }
                 let found = items.iter().any(|item| values_equal(&lv, item));
                 Ok(Value::Bool(found))
             }
-            _ => Err(UzonError::type_error("'in' requires a list on the right", node.span.line, node.span.col)),
+            Value::Tuple(t) => {
+                // §5.8.1: tuple — heterogeneous, type mismatch elements are skipped (no error)
+                let found = t.elements.iter().any(|elem| {
+                    if elem.is_undefined() { return false; }
+                    values_equal(&lv, elem)
+                });
+                Ok(Value::Bool(found))
+            }
+            Value::Struct(fields) => {
+                // §5.8.1: struct — value membership (not key). Key check is std.hasKey.
+                let found = fields.values().any(|val| {
+                    if val.is_undefined() { return false; }
+                    values_equal(&lv, val)
+                });
+                Ok(Value::Bool(found))
+            }
+            _ => Err(UzonError::type_error(
+                format!("'in' requires list, tuple, or struct on the right, got {}", rv.type_name()),
+                node.span.line, node.span.col,
+            )),
         }
+    }
+
+    /// D.3: numeric type_ann compatibility check for `in` operator.
+    fn check_in_numeric_compat(lv: &Value, elem: &Value, node: &Node) -> Result<()> {
+        match (lv, elem) {
+            (Value::Integer(li), Value::Integer(ei)) => {
+                if li.explicit && li.type_ann != ei.type_ann {
+                    return Err(UzonError::type_error(
+                        format!("'in' requires value and list elements to be the same type, got {} and {}",
+                            li.type_ann.display_name(), ei.type_ann.display_name()),
+                        node.span.line, node.span.col,
+                    ));
+                }
+                if ei.explicit && !li.explicit && li.type_ann != ei.type_ann {
+                    // untyped adopts typed → ok
+                } else if let Err(msg) = UzonInteger::adopt_type(&li.type_ann, &ei.type_ann) {
+                    return Err(UzonError::type_error(
+                        format!("'in' requires value and list elements to be the same type: {msg}"),
+                        node.span.line, node.span.col,
+                    ));
+                }
+            }
+            (Value::Float(lf), Value::Float(ef)) => {
+                if lf.explicit && lf.type_ann != ef.type_ann {
+                    return Err(UzonError::type_error(
+                        format!("'in' requires value and list elements to be the same type, got {} and {}",
+                            lf.type_ann.display_name(), ef.type_ann.display_name()),
+                        node.span.line, node.span.col,
+                    ));
+                }
+                if ef.explicit && !lf.explicit && lf.type_ann != ef.type_ann {
+                    // untyped adopts typed → ok
+                } else if let Err(msg) = UzonFloat::adopt_type(&lf.type_ann, &ef.type_ann) {
+                    return Err(UzonError::type_error(
+                        format!("'in' requires value and list elements to be the same type: {msg}"),
+                        node.span.line, node.span.col,
+                    ));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
     }
 
     fn eval_binary_concat(
