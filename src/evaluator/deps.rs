@@ -13,7 +13,9 @@ use super::Evaluator;
 impl Evaluator {
     // === Dependency resolution (Kahn's algorithm) ===
 
-    pub(crate) fn topological_sort(&self, bindings: &[Binding], scope: &Scope) -> Result<Vec<usize>> {
+    /// Returns `(order, cycle_indices)` where `order` contains indices of non-cycle
+    /// bindings in evaluation order, and `cycle_indices` lists bindings in cycles.
+    pub(crate) fn topological_sort(&self, bindings: &[Binding], scope: &Scope) -> (Vec<usize>, Vec<usize>) {
         let names: Vec<&str> = bindings.iter().map(|b| b.name.as_str()).collect();
         let name_to_idx: HashMap<&str, usize> = names.iter().enumerate().map(|(i, n)| (*n, i)).collect();
 
@@ -57,31 +59,23 @@ impl Evaluator {
             }
         }
 
-        if result.len() != bindings.len() {
-            let cycle_indices: Vec<usize> = (0..bindings.len())
-                .filter(|&i| in_deg[i] > 0)
-                .collect();
-            let in_cycle: Vec<&str> = cycle_indices.iter().map(|&i| names[i]).collect();
-            let first = cycle_indices[0];
-            return Err(UzonError::circular(
-                format!("circular dependency among: {}", in_cycle.join(", ")),
-                bindings[first].span.line,
-                bindings[first].span.col,
-            ));
-        }
+        let cycle_indices: Vec<usize> = (0..bindings.len())
+            .filter(|&i| in_deg[i] > 0)
+            .collect();
 
-        Ok(result)
+        (result, cycle_indices)
     }
 
     /// §3.8: Static check that function call graph is a DAG (no recursion).
-    pub(crate) fn check_function_call_dag(&self, bindings: &[Binding]) -> Result<()> {
+    /// Returns the set of function names participating in cycles (empty if no cycles).
+    pub(crate) fn check_function_call_dag(&self, bindings: &[Binding]) -> HashSet<String> {
         let func_names: HashSet<&str> = bindings.iter()
             .filter(|b| matches!(b.value.kind, NodeKind::FunctionExpr { .. }))
             .map(|b| b.name.as_str())
             .collect();
 
         if func_names.is_empty() {
-            return Ok(());
+            return HashSet::new();
         }
 
         let mut call_graph: HashMap<&str, HashSet<&str>> = HashMap::new();
@@ -98,24 +92,27 @@ impl Evaluator {
 
         // DFS cycle detection (white=0, gray=1, black=2)
         let mut color: HashMap<&str, u8> = call_graph.keys().map(|&k| (k, 0u8)).collect();
-        let mut cycle_path: Vec<&str> = Vec::new();
+        let mut cycle_names = HashSet::new();
 
         for &name in call_graph.keys() {
             if color[name] == 0 {
-                if self.dfs_find_cycle(name, &call_graph, &mut color, &mut cycle_path) {
-                    let span = bindings.iter()
-                        .find(|b| b.name == cycle_path[0])
-                        .map(|b| b.span)
-                        .unwrap_or(Span { line: 0, col: 0 });
-                    return Err(UzonError::circular(
-                        format!("recursive function call detected: {}", cycle_path.join(" → ")),
-                        span.line, span.col,
-                    ));
+                let mut path = Vec::new();
+                if self.dfs_find_cycle(name, &call_graph, &mut color, &mut path) {
+                    // Collect all gray (cycle-participating) nodes
+                    for (&k, &c) in color.iter() {
+                        if c == 1 {
+                            cycle_names.insert(k.to_string());
+                        }
+                    }
+                    // Mark gray nodes as black to avoid re-reporting
+                    for (_, c) in color.iter_mut() {
+                        if *c == 1 { *c = 2; }
+                    }
                 }
             }
         }
 
-        Ok(())
+        cycle_names
     }
 
     pub(crate) fn collect_function_calls<'a>(node: &'a Node, func_names: &HashSet<&str>, calls: &mut HashSet<&'a str>) {

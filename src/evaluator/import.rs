@@ -76,6 +76,7 @@ impl Evaluator {
             plain: self.plain,
             in_type_annotation: false,
             in_function_body: false,
+            collected_errors: Vec::new(),
         };
         let result = child_eval.evaluate(&doc)
             .map_err(add_trace)?;

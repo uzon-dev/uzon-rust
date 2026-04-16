@@ -54,6 +54,10 @@ pub enum UzonError {
         location: Option<Location>,
         import_trace: Vec<Location>,
     },
+    /// Multiple errors collected during evaluation (e.g. independent cycles).
+    Multiple {
+        errors: Vec<UzonError>,
+    },
 }
 
 impl UzonError {
@@ -94,13 +98,45 @@ impl UzonError {
         matches!(self, UzonError::Runtime { .. })
     }
 
+    /// Returns true if this is a Circular dependency error.
+    pub fn is_circular(&self) -> bool {
+        matches!(self, UzonError::Circular { .. })
+    }
+
+    /// Wrap multiple errors into a single error value.
+    pub fn multiple(errors: Vec<UzonError>) -> Self {
+        debug_assert!(!errors.is_empty());
+        if errors.len() == 1 {
+            return errors.into_iter().next().unwrap();
+        }
+        UzonError::Multiple { errors }
+    }
+
     /// Attach a filename to the error's location (for imported file errors, §7).
     pub fn with_filename(mut self, filename: String) -> Self {
+        if let UzonError::Multiple { ref mut errors } = self {
+            for e in errors.iter_mut() {
+                let loc = match e {
+                    UzonError::Syntax { location, .. }
+                    | UzonError::Type { location, .. }
+                    | UzonError::Runtime { location, .. }
+                    | UzonError::Circular { location, .. } => location,
+                    UzonError::Multiple { .. } => continue,
+                };
+                if let Some(loc) = loc {
+                    if loc.filename.is_none() {
+                        loc.filename = Some(filename.clone());
+                    }
+                }
+            }
+            return self;
+        }
         let loc = match &mut self {
             UzonError::Syntax { location, .. }
             | UzonError::Type { location, .. }
             | UzonError::Runtime { location, .. }
             | UzonError::Circular { location, .. } => location,
+            UzonError::Multiple { .. } => unreachable!(),
         };
         if let Some(loc) = loc {
             if loc.filename.is_none() {
@@ -113,11 +149,25 @@ impl UzonError {
     /// Push an import callsite onto the trace. The most recent import site
     /// is pushed last, so the trace reads innermost-first (like a stack trace).
     pub fn with_import_site(mut self, line: usize, col: usize, filename: Option<String>) -> Self {
+        if let UzonError::Multiple { ref mut errors } = self {
+            for e in errors.iter_mut() {
+                let trace = match e {
+                    UzonError::Syntax { import_trace, .. }
+                    | UzonError::Type { import_trace, .. }
+                    | UzonError::Runtime { import_trace, .. }
+                    | UzonError::Circular { import_trace, .. } => import_trace,
+                    UzonError::Multiple { .. } => continue,
+                };
+                trace.push(Location { line, col: col, filename: filename.clone() });
+            }
+            return self;
+        }
         let trace = match &mut self {
             UzonError::Syntax { import_trace, .. }
             | UzonError::Type { import_trace, .. }
             | UzonError::Runtime { import_trace, .. }
             | UzonError::Circular { import_trace, .. } => import_trace,
+            UzonError::Multiple { .. } => unreachable!(),
         };
         trace.push(Location { line, col, filename });
         self
@@ -157,6 +207,15 @@ impl fmt::Display for UzonError {
             }
             UzonError::Circular { message, location, import_trace } => {
                 write_error_line(f, "CircularError", message, location, import_trace)
+            }
+            UzonError::Multiple { errors } => {
+                for (i, e) in errors.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, "\n")?;
+                    }
+                    write!(f, "{e}")?;
+                }
+                Ok(())
             }
         }
     }

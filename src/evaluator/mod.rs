@@ -45,6 +45,8 @@ pub struct Evaluator {
     pub(crate) in_type_annotation: bool,
     /// When true, bare identifiers resolve against the current scope (function body mode §3.8).
     pub(crate) in_function_body: bool,
+    /// Collected errors from all cycle participants (binding cycles + function call cycles).
+    pub(crate) collected_errors: Vec<UzonError>,
 }
 
 impl Evaluator {
@@ -60,6 +62,7 @@ impl Evaluator {
             plain: options.plain,
             in_type_annotation: false,
             in_function_body: false,
+            collected_errors: Vec::new(),
         }
     }
 
@@ -144,7 +147,19 @@ impl Evaluator {
 
     pub fn evaluate(&mut self, doc: &Document) -> Result<BTreeMap<String, Value>> {
         let mut scope = Scope::new();
-        self.eval_bindings(&doc.bindings, &mut scope)?;
+        match self.eval_bindings(&doc.bindings, &mut scope) {
+            Ok(()) => {}
+            Err(e) => {
+                // If cycle errors were collected before this error, return them all
+                if !self.collected_errors.is_empty() {
+                    self.collected_errors.push(e);
+                    return Err(UzonError::multiple(
+                        std::mem::take(&mut self.collected_errors),
+                    ));
+                }
+                return Err(e);
+            }
+        }
         let result = scope.to_map();
         if self.plain {
             Ok(result.into_iter().map(|(k, v)| (k, v.to_plain())).collect())
@@ -154,15 +169,57 @@ impl Evaluator {
     }
 
     pub(crate) fn eval_bindings(&mut self, bindings: &[Binding], scope: &mut Scope) -> Result<()> {
-        // §3.8: Static call graph DAG check — detect recursive function calls
-        self.check_function_call_dag(bindings)?;
+        // Pre-evaluation static checks: collect ALL cycle errors, then continue
+        // evaluating non-cycle bindings so struct import cycles are also discovered.
 
-        // Build dependency graph and topologically sort
-        let order = self.topological_sort(bindings, scope)?;
+        let (order, cycle_indices) = self.topological_sort(bindings, scope);
+        let fn_cycle_names = self.check_function_call_dag(bindings);
 
+        // Report binding cycles (excluding function-call cycle participants,
+        // which are reported separately with a more specific message)
+        for &idx in &cycle_indices {
+            let b = &bindings[idx];
+            if !fn_cycle_names.contains(&b.name) {
+                self.collected_errors.push(UzonError::circular(
+                    format!("circular dependency detected: '{}'", b.name),
+                    b.span.line, b.span.col,
+                ));
+            }
+        }
+
+        // Report function call cycles
+        for name in &fn_cycle_names {
+            if let Some(b) = bindings.iter().find(|b| b.name == *name) {
+                self.collected_errors.push(UzonError::circular(
+                    format!("recursive function call detected: '{name}'"),
+                    b.span.line, b.span.col,
+                ));
+            }
+        }
+
+        // Evaluate non-cycle bindings using partial topological order
+        let mut had_nested_circular = false;
         for idx in order {
             let binding = &bindings[idx];
-            self.eval_single_binding(binding, scope)?;
+            // Skip function-cycle participants (already reported above)
+            if fn_cycle_names.contains(&binding.name) {
+                continue;
+            }
+
+            match self.eval_single_binding(binding, scope) {
+                Ok(()) => {}
+                Err(e) if e.is_circular() => {
+                    self.collected_errors.push(e);
+                    had_nested_circular = true;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        if !cycle_indices.is_empty() || !fn_cycle_names.is_empty() || had_nested_circular {
+            return Err(UzonError::multiple(
+                std::mem::take(&mut self.collected_errors),
+            ));
         }
 
         Ok(())

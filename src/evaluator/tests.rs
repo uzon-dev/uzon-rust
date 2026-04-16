@@ -696,6 +696,20 @@ fn test_circular_dependency() {
     eval_err("a is b\nb is a");
 }
 
+#[test]
+fn test_multiple_circular_dependencies() {
+    // Two independent cycles: a↔b and c↔d — should report all participants
+    let err = eval_err("a is b\nb is a\nc is d\nd is c");
+    if let crate::error::UzonError::Multiple { errors } = err {
+        assert!(errors.len() >= 2, "expected multiple errors, got {}", errors.len());
+        for e in &errors {
+            assert!(e.is_circular(), "expected circular error, got: {e}");
+        }
+    } else {
+        panic!("expected Multiple error, got: {err}");
+    }
+}
+
 // === Bare name resolution (§5.12) ===
 
 #[test]
