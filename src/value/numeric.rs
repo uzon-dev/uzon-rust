@@ -32,7 +32,8 @@ impl IntegerType {
     pub fn range(&self) -> Option<(i128, i128)> {
         match self {
             IntegerType::Arbitrary => Some((i128::MIN, i128::MAX)),
-            IntegerType::I(0) | IntegerType::U(0) => None,
+            // §4.2 v0.8: i0/u0 are unit types — only value `0` is valid (2^0 = 1 value).
+            IntegerType::I(0) | IntegerType::U(0) => Some((0, 0)),
             IntegerType::I(n) => {
                 let n = *n as u32;
                 if n >= 128 {
@@ -161,21 +162,14 @@ impl UzonInteger {
 
     pub fn validate_range(&self) -> Result<(), String> {
         let type_name = self.type_ann.display_name();
-        match self.type_ann.range() {
-            None => Err(format!(
-                "{} does not fit in {type_name} (no valid values for zero-bit type)",
+        let (min, max) = self.type_ann.range().unwrap_or((i128::MIN, i128::MAX));
+        if self.value < min || self.value > max {
+            Err(format!(
+                "{} does not fit in {type_name} (range {min}..{max})",
                 self.value
-            )),
-            Some((min, max)) => {
-                if self.value < min || self.value > max {
-                    Err(format!(
-                        "{} does not fit in {type_name} (range {min}..{max})",
-                        self.value
-                    ))
-                } else {
-                    Ok(())
-                }
-            }
+            ))
+        } else {
+            Ok(())
         }
     }
 
