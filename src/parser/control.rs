@@ -181,6 +181,18 @@ impl Parser {
         }
         self.skip_newlines();
 
+        // §3.8: reject duplicate parameter names
+        for (i, p) in params.iter().enumerate() {
+            for prev in &params[..i] {
+                if p.name == prev.name {
+                    return Err(UzonError::syntax(
+                        format!("duplicate parameter name '{}'", p.name),
+                        p.span.line, p.span.col,
+                    ));
+                }
+            }
+        }
+
         // §3.8: parameters with defaults must appear after all required parameters
         let mut seen_default = false;
         for param in &params {

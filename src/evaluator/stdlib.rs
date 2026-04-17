@@ -65,7 +65,8 @@ impl Evaluator {
         let val = self.eval_node(arg, scope, exclude)?;
         if val.is_undefined() {
             return Err(UzonError::runtime(
-                format!("std.{func_name} received undefined argument"),
+                format!("std.{func_name} received {} as argument",
+                    Self::describe_undefined(&[(&val, arg)])),
                 node.span.line, node.span.col,
             ));
         }
@@ -886,7 +887,7 @@ impl Evaluator {
             // §D.2: undefined as argument is a runtime error
             if val.is_undefined() {
                 return Err(UzonError::runtime(
-                    "undefined cannot be passed as a function argument",
+                    format!("undefined cannot be passed as argument for parameter '{}'", param.name),
                     node.span.line, node.span.col,
                 ));
             }

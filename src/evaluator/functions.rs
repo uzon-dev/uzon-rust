@@ -21,7 +21,8 @@ impl Evaluator {
         // §3.1: calling undefined is a runtime error; calling non-function is a type error (§5.15)
         if func_val.is_undefined() {
             return Err(UzonError::runtime(
-                "cannot call undefined, expected function",
+                format!("cannot call {}, expected function",
+                    Self::describe_undefined(&[(&func_val, callee)])),
                 node.span.line, node.span.col,
             ));
         }
@@ -40,7 +41,8 @@ impl Evaluator {
             // §3.1: undefined as argument is a runtime error
             if val.is_undefined() {
                 return Err(UzonError::runtime(
-                    "undefined cannot be passed as a function argument",
+                    format!("{} cannot be passed as a function argument",
+                        Self::describe_undefined(&[(&val, arg)])),
                     arg.span.line, arg.span.col,
                 ));
             }

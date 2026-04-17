@@ -710,6 +710,30 @@ fn test_multiple_circular_dependencies() {
     }
 }
 
+#[test]
+fn test_duplicate_function_param_name() {
+    let err = eval_err("f is function x as i32, x as i32 returns i32 { x }");
+    assert!(matches!(err, crate::error::UzonError::Syntax { .. }));
+}
+
+#[test]
+fn test_recursive_function_call_site() {
+    // Recursive call error should point to the call site (line 2), not the definition (line 1)
+    let err = eval_err("f is function x as i32 returns i32 {\n  f(x)\n}");
+    let loc = match &err {
+        crate::error::UzonError::Circular { location, .. } => location.as_ref().unwrap(),
+        crate::error::UzonError::Multiple { errors } => {
+            let circ = errors.iter().find(|e| e.is_circular()).unwrap();
+            match circ {
+                crate::error::UzonError::Circular { location, .. } => location.as_ref().unwrap(),
+                _ => unreachable!(),
+            }
+        }
+        _ => panic!("expected circular error, got: {err}"),
+    };
+    assert_eq!(loc.line, 2, "error should point to call site line");
+}
+
 // === Bare name resolution (§5.12) ===
 
 #[test]

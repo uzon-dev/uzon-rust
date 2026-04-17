@@ -28,7 +28,10 @@ impl Evaluator {
         let scrut_val = self.eval_node(scrutinee, scope, exclude)?;
 
         if scrut_val.is_undefined() {
-            return Err(UzonError::runtime("cannot match against undefined", node.span.line, node.span.col));
+            return Err(UzonError::runtime(
+                format!("cannot match against {}", Self::describe_undefined(&[(&scrut_val, scrutinee)])),
+                node.span.line, node.span.col,
+            ));
         }
 
         match mode {

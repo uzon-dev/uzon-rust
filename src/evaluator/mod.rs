@@ -66,6 +66,29 @@ impl Evaluator {
         }
     }
 
+    /// Extract the identifier name from an AST node, if it's a bare identifier.
+    fn node_ident(node: &Node) -> Option<&str> {
+        match &node.kind {
+            NodeKind::Identifier { name } => Some(name.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Build an "undefined" description that includes the names of undefined identifiers.
+    /// Returns e.g. `"undefined 'price', 'quantity'"` or just `"undefined"`.
+    pub(crate) fn describe_undefined(pairs: &[(&Value, &Node)]) -> String {
+        let names: Vec<&str> = pairs.iter()
+            .filter(|(v, _)| v.is_undefined())
+            .filter_map(|(_, n)| Self::node_ident(n))
+            .collect();
+        if names.is_empty() {
+            "undefined".to_string()
+        } else {
+            let quoted: Vec<String> = names.iter().map(|n| format!("'{n}'")).collect();
+            format!("undefined {}", quoted.join(", "))
+        }
+    }
+
     /// Unwrap union/tagged-union to inner value (spec §3.7.1: transparent).
     /// Tagged union equality is special — it compares tag+value, so do NOT unwrap for `is`/`is not`.
     pub(crate) fn unwrap_union(val: &Value) -> &Value {
@@ -173,10 +196,19 @@ impl Evaluator {
         // evaluating non-cycle bindings so struct import cycles are also discovered.
 
         let (order, cycle_indices) = self.topological_sort(bindings, scope);
-        let fn_cycle_names = self.check_function_call_dag(bindings);
+        let fn_cycles = self.check_function_call_dag(bindings);
+        let fn_cycle_names: HashSet<String> = fn_cycles.iter().map(|rc| rc.name.clone()).collect();
+
+        // Report function call cycles (pointing to call site, not definition)
+        for rc in &fn_cycles {
+            self.collected_errors.push(UzonError::circular(
+                format!("recursive function call detected: '{}'", rc.name),
+                rc.call_span.line, rc.call_span.col,
+            ));
+        }
 
         // Report binding cycles (excluding function-call cycle participants,
-        // which are reported separately with a more specific message)
+        // which are already reported above with a more specific message)
         for &idx in &cycle_indices {
             let b = &bindings[idx];
             if !fn_cycle_names.contains(&b.name) {
@@ -187,18 +219,9 @@ impl Evaluator {
             }
         }
 
-        // Report function call cycles
-        for name in &fn_cycle_names {
-            if let Some(b) = bindings.iter().find(|b| b.name == *name) {
-                self.collected_errors.push(UzonError::circular(
-                    format!("recursive function call detected: '{name}'"),
-                    b.span.line, b.span.col,
-                ));
-            }
-        }
-
-        // Evaluate non-cycle bindings using partial topological order
-        let mut had_nested_circular = false;
+        // Evaluate non-cycle bindings using partial topological order.
+        // All errors are collected so that multiple problems are reported at once.
+        let mut had_errors = !cycle_indices.is_empty() || !fn_cycle_names.is_empty();
         for idx in order {
             let binding = &bindings[idx];
             // Skip function-cycle participants (already reported above)
@@ -210,13 +233,16 @@ impl Evaluator {
                 Ok(()) => {}
                 Err(e) if e.is_circular() => {
                     self.collected_errors.push(e);
-                    had_nested_circular = true;
+                    had_errors = true;
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    self.collected_errors.push(e);
+                    had_errors = true;
+                }
             }
         }
 
-        if !cycle_indices.is_empty() || !fn_cycle_names.is_empty() || had_nested_circular {
+        if had_errors {
             return Err(UzonError::multiple(
                 std::mem::take(&mut self.collected_errors),
             ));

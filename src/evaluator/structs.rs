@@ -244,7 +244,11 @@ impl Evaluator {
     ) -> Result<Value> {
         let base_val = self.eval_node(base, scope, exclude)?;
         if base_val.is_undefined() {
-            return Err(UzonError::runtime("'with' requires a struct base, got undefined", node.span.line, node.span.col));
+            return Err(UzonError::runtime(
+                format!("'with' requires a struct base, got {}",
+                    Self::describe_undefined(&[(&base_val, base)])),
+                node.span.line, node.span.col,
+            ));
         }
         let mut base_map = match base_val {
             Value::Struct(m) => m,
@@ -295,7 +299,11 @@ impl Evaluator {
     ) -> Result<Value> {
         let base_val = self.eval_node(base, scope, exclude)?;
         if base_val.is_undefined() {
-            return Err(UzonError::runtime("'plus' requires a struct base, got undefined", node.span.line, node.span.col));
+            return Err(UzonError::runtime(
+                format!("'plus' requires a struct base, got {}",
+                    Self::describe_undefined(&[(&base_val, base)])),
+                node.span.line, node.span.col,
+            ));
         }
         let base_map = match base_val {
             Value::Struct(m) => m,

@@ -10,6 +10,12 @@ use crate::value::*;
 
 use super::Evaluator;
 
+/// A recursive function call: the calling function's name and the call site location.
+pub(crate) struct RecursiveCall {
+    pub name: String,
+    pub call_span: Span,
+}
+
 impl Evaluator {
     // === Dependency resolution (Kahn's algorithm) ===
 
@@ -67,43 +73,66 @@ impl Evaluator {
     }
 
     /// §3.8: Static check that function call graph is a DAG (no recursion).
-    /// Returns the set of function names participating in cycles (empty if no cycles).
-    pub(crate) fn check_function_call_dag(&self, bindings: &[Binding]) -> HashSet<String> {
+    /// Returns recursive call sites with their spans (empty if no cycles).
+    pub(crate) fn check_function_call_dag(&self, bindings: &[Binding]) -> Vec<RecursiveCall> {
         let func_names: HashSet<&str> = bindings.iter()
             .filter(|b| matches!(b.value.kind, NodeKind::FunctionExpr { .. }))
             .map(|b| b.name.as_str())
             .collect();
 
         if func_names.is_empty() {
-            return HashSet::new();
+            return Vec::new();
         }
 
         let mut call_graph: HashMap<&str, HashSet<&str>> = HashMap::new();
+        let mut call_spans: HashMap<&str, HashMap<&str, Span>> = HashMap::new();
         for binding in bindings {
             if let NodeKind::FunctionExpr { body_bindings, body_expr, .. } = &binding.value.kind {
                 let mut calls = HashSet::new();
-                Self::collect_function_calls(body_expr, &func_names, &mut calls);
+                let mut spans = HashMap::new();
+                Self::collect_function_calls(body_expr, &func_names, &mut calls, &mut spans);
                 for bb in body_bindings {
-                    Self::collect_function_calls(&bb.value, &func_names, &mut calls);
+                    Self::collect_function_calls(&bb.value, &func_names, &mut calls, &mut spans);
                 }
                 call_graph.insert(binding.name.as_str(), calls);
+                call_spans.insert(binding.name.as_str(), spans);
             }
         }
 
         // DFS cycle detection (white=0, gray=1, black=2)
         let mut color: HashMap<&str, u8> = call_graph.keys().map(|&k| (k, 0u8)).collect();
-        let mut cycle_names = HashSet::new();
+        let mut result = Vec::new();
 
         for &name in call_graph.keys() {
             if color[name] == 0 {
                 let mut path = Vec::new();
                 if self.dfs_find_cycle(name, &call_graph, &mut color, &mut path) {
                     // Collect all gray (cycle-participating) nodes
-                    for (&k, &c) in color.iter() {
-                        if c == 1 {
-                            cycle_names.insert(k.to_string());
+                    let gray_names: Vec<&str> = color.iter()
+                        .filter(|&(_, &c)| c == 1)
+                        .map(|(&k, _)| k)
+                        .collect();
+                    let gray_set: HashSet<&str> = gray_names.iter().copied().collect();
+
+                    // Find call sites where a gray node calls another gray node
+                    for &caller in &gray_names {
+                        if let Some(spans) = call_spans.get(caller) {
+                            if let Some(callees) = call_graph.get(caller) {
+                                for &callee in callees {
+                                    if gray_set.contains(callee) {
+                                        if let Some(&span) = spans.get(callee) {
+                                            result.push(RecursiveCall {
+                                                name: caller.to_string(),
+                                                call_span: span,
+                                            });
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
+
                     // Mark gray nodes as black to avoid re-reporting
                     for (_, c) in color.iter_mut() {
                         if *c == 1 { *c = 2; }
@@ -112,86 +141,92 @@ impl Evaluator {
             }
         }
 
-        cycle_names
+        result
     }
 
-    pub(crate) fn collect_function_calls<'a>(node: &'a Node, func_names: &HashSet<&str>, calls: &mut HashSet<&'a str>) {
+    pub(crate) fn collect_function_calls<'a>(
+        node: &'a Node,
+        func_names: &HashSet<&str>,
+        calls: &mut HashSet<&'a str>,
+        spans: &mut HashMap<&'a str, Span>,
+    ) {
         match &node.kind {
             NodeKind::FunctionCall { callee, args } => {
                 if let NodeKind::Identifier { name } = &callee.kind {
                     if func_names.contains(name.as_str()) {
                         calls.insert(name.as_str());
+                        spans.entry(name.as_str()).or_insert(node.span);
                     }
                 }
-                Self::collect_function_calls(callee, func_names, calls);
+                Self::collect_function_calls(callee, func_names, calls, spans);
                 for arg in args {
-                    Self::collect_function_calls(arg, func_names, calls);
+                    Self::collect_function_calls(arg, func_names, calls, spans);
                 }
             }
             NodeKind::MemberAccess { object, .. } => {
-                Self::collect_function_calls(object, func_names, calls);
+                Self::collect_function_calls(object, func_names, calls, spans);
             }
             NodeKind::BinaryOp { left, right, .. } => {
-                Self::collect_function_calls(left, func_names, calls);
-                Self::collect_function_calls(right, func_names, calls);
+                Self::collect_function_calls(left, func_names, calls, spans);
+                Self::collect_function_calls(right, func_names, calls, spans);
             }
             NodeKind::UnaryOp { operand, .. } => {
-                Self::collect_function_calls(operand, func_names, calls);
+                Self::collect_function_calls(operand, func_names, calls, spans);
             }
             NodeKind::IfExpr { condition, then_branch, else_branch } => {
-                Self::collect_function_calls(condition, func_names, calls);
-                Self::collect_function_calls(then_branch, func_names, calls);
-                Self::collect_function_calls(else_branch, func_names, calls);
+                Self::collect_function_calls(condition, func_names, calls, spans);
+                Self::collect_function_calls(then_branch, func_names, calls, spans);
+                Self::collect_function_calls(else_branch, func_names, calls, spans);
             }
             NodeKind::CaseExpr { scrutinee, when_clauses, else_branch, .. } => {
-                Self::collect_function_calls(scrutinee, func_names, calls);
+                Self::collect_function_calls(scrutinee, func_names, calls, spans);
                 for wc in when_clauses {
-                    Self::collect_function_calls(&wc.value, func_names, calls);
-                    Self::collect_function_calls(&wc.result, func_names, calls);
+                    Self::collect_function_calls(&wc.value, func_names, calls, spans);
+                    Self::collect_function_calls(&wc.result, func_names, calls, spans);
                 }
-                Self::collect_function_calls(else_branch, func_names, calls);
+                Self::collect_function_calls(else_branch, func_names, calls, spans);
             }
             NodeKind::ListLiteral { elements } | NodeKind::TupleLiteral { elements } => {
                 for elem in elements {
-                    Self::collect_function_calls(elem, func_names, calls);
+                    Self::collect_function_calls(elem, func_names, calls, spans);
                 }
             }
             NodeKind::StructLiteral { fields } => {
                 for binding in fields {
-                    Self::collect_function_calls(&binding.value, func_names, calls);
+                    Self::collect_function_calls(&binding.value, func_names, calls, spans);
                 }
             }
             NodeKind::StructOverride { base, overrides } | NodeKind::StructExtension { base, extension: overrides } => {
-                Self::collect_function_calls(base, func_names, calls);
-                Self::collect_function_calls(overrides, func_names, calls);
+                Self::collect_function_calls(base, func_names, calls, spans);
+                Self::collect_function_calls(overrides, func_names, calls, spans);
             }
             NodeKind::TypeAnnotation { expr, .. } | NodeKind::Conversion { expr, .. } => {
-                Self::collect_function_calls(expr, func_names, calls);
+                Self::collect_function_calls(expr, func_names, calls, spans);
             }
             NodeKind::StringLiteral { parts } => {
                 for part in parts {
                     if let StringPart::Interpolation(expr) = part {
-                        Self::collect_function_calls(expr, func_names, calls);
+                        Self::collect_function_calls(expr, func_names, calls, spans);
                     }
                 }
             }
             NodeKind::FieldExtraction { source } => {
-                Self::collect_function_calls(source, func_names, calls);
+                Self::collect_function_calls(source, func_names, calls, spans);
             }
             NodeKind::Grouping { expr } => {
-                Self::collect_function_calls(expr, func_names, calls);
+                Self::collect_function_calls(expr, func_names, calls, spans);
             }
             NodeKind::OrElse { left, right } => {
-                Self::collect_function_calls(left, func_names, calls);
-                Self::collect_function_calls(right, func_names, calls);
+                Self::collect_function_calls(left, func_names, calls, spans);
+                Self::collect_function_calls(right, func_names, calls, spans);
             }
             NodeKind::FromEnum { value, .. } | NodeKind::FromUnion { value, .. } | NodeKind::NamedVariant { value, .. } => {
-                Self::collect_function_calls(value, func_names, calls);
+                Self::collect_function_calls(value, func_names, calls, spans);
             }
             NodeKind::FunctionExpr { body_bindings, body_expr, .. } => {
-                Self::collect_function_calls(body_expr, func_names, calls);
+                Self::collect_function_calls(body_expr, func_names, calls, spans);
                 for bb in body_bindings {
-                    Self::collect_function_calls(&bb.value, func_names, calls);
+                    Self::collect_function_calls(&bb.value, func_names, calls, spans);
                 }
             }
             _ => {}

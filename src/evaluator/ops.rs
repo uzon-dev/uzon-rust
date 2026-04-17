@@ -32,6 +32,13 @@ impl Evaluator {
             | BinaryOp::Mod | BinaryOp::Pow => {
                 let lv = self.eval_node(left, scope, exclude)?;
                 let rv = self.eval_node(right, scope, exclude)?;
+                if lv.is_undefined() || rv.is_undefined() {
+                    return Err(UzonError::runtime(
+                        format!("cannot perform arithmetic on {}; use 'or else' to provide a fallback",
+                            Self::describe_undefined(&[(&lv, left), (&rv, right)])),
+                        node.span.line, node.span.col,
+                    ));
+                }
                 // §3.7.1: unions are transparent in arithmetic
                 let lv_unwrapped = Self::unwrap_union(&lv);
                 let rv_unwrapped = Self::unwrap_union(&rv);
@@ -41,6 +48,13 @@ impl Evaluator {
             BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
                 let lv = self.eval_node(left, scope, exclude)?;
                 let rv = self.eval_node(right, scope, exclude)?;
+                if lv.is_undefined() || rv.is_undefined() {
+                    return Err(UzonError::runtime(
+                        format!("cannot compare {}; use 'or else' to provide a fallback",
+                            Self::describe_undefined(&[(&lv, left), (&rv, right)])),
+                        node.span.line, node.span.col,
+                    ));
+                }
                 // §5.4 v0.8: ordered comparison on tagged unions, untagged unions, or functions → type error
                 if matches!((&lv, &rv), (Value::TaggedUnion(_), Value::TaggedUnion(_))) {
                     return Err(UzonError::type_error(
@@ -62,12 +76,6 @@ impl Evaluator {
                 }
                 let lv = Self::unwrap_union(&lv);
                 let rv = Self::unwrap_union(&rv);
-                if lv.is_undefined() || rv.is_undefined() {
-                    return Err(UzonError::runtime(
-                        "cannot compare undefined values; use 'or else' to provide a fallback",
-                        node.span.line, node.span.col,
-                    ));
-                }
                 Self::check_numeric_type_compat(lv, rv, node)?;
                 self.eval_comparison(op, lv, rv, node)
             }
@@ -86,7 +94,10 @@ impl Evaluator {
         let lv = Self::unwrap_union_owned(self.eval_node(left, scope, exclude)?);
         // §3.1: undefined in logical operators is a runtime error
         if lv.is_undefined() {
-            return Err(UzonError::runtime("'and' requires bool operands, got undefined", node.span.line, node.span.col));
+            return Err(UzonError::runtime(
+                format!("'and' requires bool operands, got {}", Self::describe_undefined(&[(&lv, left)])),
+                node.span.line, node.span.col,
+            ));
         }
         match lv {
             Value::Bool(false) => {
@@ -117,7 +128,10 @@ impl Evaluator {
         let lv = Self::unwrap_union_owned(self.eval_node(left, scope, exclude)?);
         // §3.1: undefined in logical operators is a runtime error
         if lv.is_undefined() {
-            return Err(UzonError::runtime("'or' requires bool operands, got undefined", node.span.line, node.span.col));
+            return Err(UzonError::runtime(
+                format!("'or' requires bool operands, got {}", Self::describe_undefined(&[(&lv, left)])),
+                node.span.line, node.span.col,
+            ));
         }
         match lv {
             Value::Bool(true) => {
@@ -251,7 +265,10 @@ impl Evaluator {
         let lv = self.eval_node(left, scope, exclude)?;
         // §3.1: undefined in 'is named' is a runtime error
         if lv.is_undefined() {
-            return Err(UzonError::runtime("'is named' requires tagged union, got undefined", node.span.line, node.span.col));
+            return Err(UzonError::runtime(
+                format!("'is named' requires tagged union, got {}", Self::describe_undefined(&[(&lv, left)])),
+                node.span.line, node.span.col,
+            ));
         }
         let tag_name = match &right.kind {
             NodeKind::Identifier { name } => name.as_str(),
@@ -295,7 +312,8 @@ impl Evaluator {
         };
         if lv.is_undefined() || rv.is_undefined() {
             return Err(UzonError::runtime(
-                "cannot use 'in' with undefined; use 'or else' to provide a fallback",
+                format!("cannot use 'in' with {}; use 'or else' to provide a fallback",
+                    Self::describe_undefined(&[(&lv, left), (&rv, right)])),
                 node.span.line, node.span.col,
             ));
         }
@@ -411,7 +429,8 @@ impl Evaluator {
         let rv = self.eval_node(right, scope, exclude)?;
         if lv.is_undefined() || rv.is_undefined() {
             return Err(UzonError::runtime(
-                "cannot concatenate undefined values; use 'or else' to provide a fallback",
+                format!("cannot concatenate {}; use 'or else' to provide a fallback",
+                    Self::describe_undefined(&[(&lv, left), (&rv, right)])),
                 node.span.line, node.span.col,
             ));
         }
@@ -471,7 +490,8 @@ impl Evaluator {
         let rv = self.eval_node(right, scope, exclude)?;
         if lv.is_undefined() || rv.is_undefined() {
             return Err(UzonError::runtime(
-                "cannot repeat undefined values; use 'or else' to provide a fallback",
+                format!("cannot repeat {}; use 'or else' to provide a fallback",
+                    Self::describe_undefined(&[(&lv, left), (&rv, right)])),
                 node.span.line, node.span.col,
             ));
         }
@@ -524,7 +544,8 @@ impl Evaluator {
         // §3.1: undefined in 'is type' is a runtime error
         if lv.is_undefined() {
             return Err(UzonError::runtime(
-                "'is type' requires a concrete value, got undefined",
+                format!("'is type' requires a concrete value, got {}",
+                    Self::describe_undefined(&[(&lv, left)])),
                 node.span.line, node.span.col,
             ));
         }
@@ -587,12 +608,6 @@ impl Evaluator {
     }
 
     pub(crate) fn eval_arithmetic(&self, op: BinaryOp, lv: &Value, rv: &Value, node: &Node) -> Result<Value> {
-        if lv.is_undefined() || rv.is_undefined() {
-            return Err(UzonError::runtime(
-                "cannot perform arithmetic on undefined; use 'or else' to provide a fallback",
-                node.span.line, node.span.col,
-            ));
-        }
         match (lv, rv) {
             (Value::Integer(a), Value::Integer(b)) => self.int_arithmetic(op, a, b, node),
             (Value::Float(a), Value::Float(b)) => self.float_arithmetic(op, a, b, node),
@@ -727,7 +742,8 @@ impl Evaluator {
                 // §3.1: undefined in arithmetic is a runtime error
                 if val.is_undefined() {
                     return Err(UzonError::runtime(
-                        "unary '-' requires numeric operand, got undefined",
+                        format!("unary '-' requires numeric operand, got {}",
+                            Self::describe_undefined(&[(&val, operand)])),
                         node.span.line, node.span.col,
                     ));
                 }
@@ -746,7 +762,11 @@ impl Evaluator {
             UnaryOp::Not => {
                 // §3.1: undefined in logical operators is a runtime error
                 if val.is_undefined() {
-                    return Err(UzonError::runtime("'not' requires bool operand, got undefined", node.span.line, node.span.col));
+                    return Err(UzonError::runtime(
+                        format!("'not' requires bool operand, got {}",
+                            Self::describe_undefined(&[(&val, operand)])),
+                        node.span.line, node.span.col,
+                    ));
                 }
                 match val {
                     Value::Bool(b) => Ok(Value::Bool(!b)),
