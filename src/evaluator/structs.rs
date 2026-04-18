@@ -64,6 +64,49 @@ impl Evaluator {
                 }
             }
 
+            // §3.4 + §6.1: typed numeric element homogeneity — if two elements both
+            // have explicit type annotations, the annotations must agree.
+            let mut int_ann: Option<crate::value::IntegerType> = None;
+            for v in &vals {
+                if let Value::Integer(i) = v {
+                    if i.explicit {
+                        if let Some(prev) = int_ann {
+                            if prev != i.type_ann {
+                                return Err(UzonError::type_error(
+                                    format!(
+                                        "list elements have mismatched integer types: {} vs {}",
+                                        prev.display_name(), i.type_ann.display_name()
+                                    ),
+                                    node.span.line, node.span.col,
+                                ));
+                            }
+                        } else {
+                            int_ann = Some(i.type_ann);
+                        }
+                    }
+                }
+            }
+            let mut float_ann: Option<crate::value::FloatType> = None;
+            for v in &vals {
+                if let Value::Float(f) = v {
+                    if f.explicit {
+                        if let Some(prev) = float_ann {
+                            if prev != f.type_ann {
+                                return Err(UzonError::type_error(
+                                    format!(
+                                        "list elements have mismatched float types: {} vs {}",
+                                        prev.display_name(), f.type_ann.display_name()
+                                    ),
+                                    node.span.line, node.span.col,
+                                ));
+                            }
+                        } else {
+                            float_ann = Some(f.type_ann);
+                        }
+                    }
+                }
+            }
+
             // §3.4 + §3.2.1 rule 5: struct homogeneity in lists
             let first_struct = vals.iter().find(|v| matches!(v, Value::Struct(_)));
             if let Some(Value::Struct(first)) = first_struct {
