@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] - 2026-04-18
+
+### Added
+
+- **Standalone type declarations** (§6.2) — direct type-naming syntax where the binding name is the type name (no `called` needed):
+  - `X is struct { ... }` — struct type
+  - `X is enum v1, v2, ...` — enum type
+  - `X is union T1, T2, ...` — union type (value is the first member type's default)
+  - `X is tagged union v1 as T1, v2 as T2, ...` — tagged union (value is the first variant's default, tagged with the first variant name)
+- `enum` and `tagged` keywords added to the lexer
+- `StandaloneTypeKind` on `Binding` records the standalone form for tooling
+- `DefaultForType { type_expr }` AST node for computing per-§3.6 defaults at evaluation time
+
+### Fixed
+
+- **§3.8 defaults**: parameter defaults that reference another parameter of the same function are now a syntax error; `undefined` as a default value is rejected; default values are eagerly evaluated at function definition time and type-checked against the declared parameter type
+- **§3.4/§6.1 typed list homogeneity**: `[1 as i32, 2 as i64]` now errors with a clear type mismatch; the same rule applies to explicitly-typed floats
+- **§5.7 or-else static type guarantee**: when the left operand is undefined at runtime but carries a static type via `as T`/`to T`, the right operand is type-checked against T (catches `env.PORT to u16 or else "default"`)
+- **§5.3 exponentiation**: negative base with a non-integer exponent is now a runtime error (e.g., `(-2.0) ^ 0.5`)
+- **§6.3 nominal type identity**: re-annotating a struct value with a different named struct type (e.g., `a as B` when `a` has type `A`) is now a type error even when the shapes match
+
 ## [0.6.0] - 2026-04-12
 
 ### Changed
