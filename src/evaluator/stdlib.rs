@@ -706,6 +706,16 @@ impl Evaluator {
                 node.span.line, node.span.col,
             )),
         };
+        // §5.16.4: std.map requires a 1-parameter function.
+        if func.params.len() != 1 {
+            return Err(UzonError::type_error(
+                format!(
+                    "std.map requires a 1-parameter function, got {}-parameter function",
+                    func.params.len()
+                ),
+                node.span.line, node.span.col,
+            ));
+        }
         let items = match Self::unwrap_union_owned(list) {
             Value::List(items) => items,
             other => return Err(UzonError::type_error(
