@@ -35,6 +35,7 @@ mod postfix;
 mod literals;
 mod control;
 mod type_expr;
+mod standalone_type;
 
 #[cfg(test)]
 mod tests;
@@ -308,6 +309,39 @@ impl Parser {
             TokenType::Is => {
                 self.advance();
                 self.skip_newlines();
+
+                // v0.9 standalone type declarations (§6.2):
+                //   X is enum v1, v2, ...
+                //   X is union T1, T2, ...
+                //   X is tagged union v1 as T1, v2 as T2, ...
+                //   X is struct { ... }
+                // The binding name becomes the type name. `called` is forbidden.
+                match self.peek_type() {
+                    TokenType::Enum => {
+                        return self.parse_standalone_enum(name, span);
+                    }
+                    TokenType::Union => {
+                        return self.parse_standalone_union(name, span);
+                    }
+                    TokenType::Tagged => {
+                        return self.parse_standalone_tagged_union(name, span);
+                    }
+                    TokenType::Struct => {
+                        // `struct {` = standalone struct type decl; `struct "..."` = import
+                        let mut look = self.pos + 1;
+                        while look < self.tokens.len()
+                            && self.tokens[look].token_type == TokenType::Newline
+                        {
+                            look += 1;
+                        }
+                        if look < self.tokens.len()
+                            && self.tokens[look].token_type == TokenType::LBrace
+                        {
+                            return self.parse_standalone_struct(name, span);
+                        }
+                    }
+                    _ => {}
+                }
             }
             // Binding decomposition: "x is not expr" -> x = (not expr)
             TokenType::IsNot => {
@@ -321,6 +355,7 @@ impl Parser {
                     called,
                     is_are: false,
                     list_type_annotation: None,
+                    standalone_type_kind: None,
                     span,
                 });
             }
@@ -342,6 +377,7 @@ impl Parser {
                     called,
                     is_are: false,
                     list_type_annotation: None,
+                    standalone_type_kind: None,
                     span,
                 });
             }
@@ -370,6 +406,7 @@ impl Parser {
                     called,
                     is_are: false,
                     list_type_annotation: None,
+                    standalone_type_kind: None,
                     span,
                 });
             }
@@ -410,6 +447,7 @@ impl Parser {
                 called: None,
                 is_are: false,
                 list_type_annotation: None,
+                standalone_type_kind: None,
                 span,
             });
         }
@@ -423,6 +461,7 @@ impl Parser {
             called,
             is_are: false,
             list_type_annotation: None,
+            standalone_type_kind: None,
             span,
         })
     }
@@ -519,6 +558,7 @@ impl Parser {
             called,
             is_are: true,
             list_type_annotation,
+            standalone_type_kind: None,
             span,
         })
     }

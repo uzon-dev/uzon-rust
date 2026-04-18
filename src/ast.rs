@@ -211,6 +211,15 @@ pub enum NodeKind {
     FieldExtraction {
         source: Box<Node>,
     },
+    /// The default value for a type expression (§3.6 default value table).
+    ///
+    /// Used as the implicit value in standalone `union`/`tagged union` declarations:
+    /// `Flexible is union i32, string` produces `0 as i32` (the default of the
+    /// first member type). Resolved at evaluation time because it may reference
+    /// named types in scope.
+    DefaultForType {
+        type_expr: TypeExpr,
+    },
 }
 
 /// Part of a string literal — plain text or interpolation (§4.4.1).
@@ -257,6 +266,9 @@ pub enum UnaryOp {
 ///
 /// - `is_are`: true if the binding uses `are` (list sugar, §3.4.1).
 /// - `list_type_annotation`: the trailing `as [Type]` in an `are` binding.
+/// - `standalone_type_kind`: Some(kind) if the binding is a v0.9 standalone type
+///   declaration (`X is enum ...`, `X is union ...`, `X is tagged union ...`,
+///   `X is struct { ... }`). Drives roundtrip stringification (§6.2).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Binding {
     pub name: String,
@@ -264,7 +276,17 @@ pub struct Binding {
     pub called: Option<String>,
     pub is_are: bool,
     pub list_type_annotation: Option<TypeExpr>,
+    pub standalone_type_kind: Option<StandaloneTypeKind>,
     pub span: Span,
+}
+
+/// Kind of v0.9 standalone type declaration (§6.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StandaloneTypeKind {
+    Enum,
+    Union,
+    TaggedUnion,
+    Struct,
 }
 
 /// The root of a parsed UZON document (§1).

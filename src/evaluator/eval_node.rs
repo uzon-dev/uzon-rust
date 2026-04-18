@@ -143,6 +143,9 @@ impl Evaluator {
             NodeKind::FieldExtraction { .. } => {
                 Err(UzonError::runtime("'of' can only be used directly after 'is' in a binding", node.span.line, node.span.col))
             }
+            NodeKind::DefaultForType { type_expr } => {
+                self.eval_default_for_type(type_expr, scope, node)
+            }
         }
     }
 
@@ -328,6 +331,94 @@ impl Evaluator {
                 Ok(Value::float(f))
             }
         }
+    }
+
+    /// Compute the default value of a type expression per the §3.6 table.
+    ///
+    /// Used by v0.9 standalone `union`/`tagged union` declarations where the
+    /// binding's value is implicitly the default of the first member type.
+    pub(crate) fn eval_default_for_type(
+        &mut self,
+        type_expr: &TypeExpr,
+        scope: &Scope,
+        node: &Node,
+    ) -> Result<Value> {
+        // null type → null
+        if type_expr.is_null {
+            return Ok(Value::Null);
+        }
+
+        // List type [T] → empty list with element type
+        if type_expr.is_list {
+            let element_type = type_expr.inner.as_ref()
+                .and_then(|inner| inner.path.last().cloned())
+                .unwrap_or_default();
+            return Ok(Value::List(UzonList::with_type(Vec::new(), element_type)));
+        }
+
+        // Tuple type (T1, T2, ...) → tuple of defaults
+        if let Some(ref types) = type_expr.tuple_types {
+            let mut elements = Vec::with_capacity(types.len());
+            for t in types {
+                elements.push(self.eval_default_for_type(t, scope, node)?);
+            }
+            return Ok(Value::Tuple(UzonTuple::new(elements)));
+        }
+
+        let type_name = type_expr.path.last().cloned().unwrap_or_default();
+
+        // Primitive types
+        match type_name.as_str() {
+            "bool" => return Ok(Value::Bool(false)),
+            "string" => return Ok(Value::String(String::new())),
+            _ => {}
+        }
+        if let Some(int_ty) = IntegerType::from_type_name(&type_name) {
+            return Ok(Value::Integer(UzonInteger::with_type(0, int_ty)));
+        }
+        if let Some(float_ty) = FloatType::from_type_name(&type_name) {
+            return Ok(Value::Float(UzonFloat::with_type(0.0, float_ty)));
+        }
+
+        // Named types via scope lookup
+        if let Some(td) = scope.resolve_type_path(&type_expr.path) {
+            match td.kind {
+                crate::scope::TypeDefKind::Enum { variants } => {
+                    let first = variants.first().cloned().ok_or_else(|| {
+                        UzonError::type_error(
+                            format!("named enum '{}' has no variants", td.name),
+                            node.span.line, node.span.col,
+                        )
+                    })?;
+                    return Ok(Value::Enum(UzonEnum::new(
+                        first, variants, Some(td.name),
+                    )));
+                }
+                crate::scope::TypeDefKind::Function { .. } => {
+                    return Err(UzonError::type_error(
+                        format!("'function' type has no default value; use inline declaration with an explicit value"),
+                        node.span.line, node.span.col,
+                    ));
+                }
+                crate::scope::TypeDefKind::Union { .. }
+                | crate::scope::TypeDefKind::Struct { .. }
+                | crate::scope::TypeDefKind::TaggedUnion { .. } => {
+                    // §3.6: for union/struct/tagged-union defaults we would need the
+                    // original AST. For now, reject as "no default computable" — this
+                    // only matters when a named compound type is used as the first
+                    // member of another standalone union/tagged-union.
+                    return Err(UzonError::type_error(
+                        format!("cannot compute default value for named type '{}' in this context; use inline declaration with an explicit value", td.name),
+                        node.span.line, node.span.col,
+                    ));
+                }
+            }
+        }
+
+        Err(UzonError::type_error(
+            format!("unknown type '{type_name}' — no default value"),
+            node.span.line, node.span.col,
+        ))
     }
 
     pub(crate) fn eval_string(
