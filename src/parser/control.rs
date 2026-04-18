@@ -210,6 +210,34 @@ impl Parser {
             }
         }
 
+        // §3.8: default expressions MUST NOT reference any parameter of the same function
+        // (parameters are not in scope until the function body begins) — syntax error.
+        // Also: `undefined` is not permitted as a default value.
+        let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+        for param in &params {
+            if let Some(ref default_expr) = param.default {
+                if let Some(name) = find_param_ref_in_node(default_expr, &param_names) {
+                    return Err(UzonError::syntax(
+                        format!(
+                            "default expression for parameter '{}' references parameter '{}'; \
+                             parameters are not in scope until the function body begins",
+                            param.name, name
+                        ),
+                        default_expr.span.line, default_expr.span.col,
+                    ));
+                }
+                if contains_undefined_literal(default_expr) {
+                    return Err(UzonError::syntax(
+                        format!(
+                            "'undefined' is not permitted as a default value for parameter '{}'",
+                            param.name
+                        ),
+                        default_expr.span.line, default_expr.span.col,
+                    ));
+                }
+            }
+        }
+
         // Parse return type (mandatory per §3.8 EBNF)
         self.expect(TokenType::Returns)?;
         self.skip_newlines();
@@ -311,5 +339,105 @@ impl Parser {
             span.line,
             span.col,
         ))
+    }
+}
+
+/// Walk a default-expression AST looking for an identifier that refers to one
+/// of the function's parameter names (§3.8: parameters are not in scope inside
+/// their own defaults). Returns the name on the first hit.
+fn find_param_ref_in_node(node: &Node, params: &[String]) -> Option<String> {
+    match &node.kind {
+        NodeKind::Identifier { name } => {
+            if params.iter().any(|p| p == name) {
+                Some(name.clone())
+            } else {
+                None
+            }
+        }
+        NodeKind::MemberAccess { object, .. } => find_param_ref_in_node(object, params),
+        NodeKind::BinaryOp { left, right, .. } => find_param_ref_in_node(left, params)
+            .or_else(|| find_param_ref_in_node(right, params)),
+        NodeKind::UnaryOp { operand, .. } => find_param_ref_in_node(operand, params),
+        NodeKind::OrElse { left, right } => find_param_ref_in_node(left, params)
+            .or_else(|| find_param_ref_in_node(right, params)),
+        NodeKind::IfExpr { condition, then_branch, else_branch } => {
+            find_param_ref_in_node(condition, params)
+                .or_else(|| find_param_ref_in_node(then_branch, params))
+                .or_else(|| find_param_ref_in_node(else_branch, params))
+        }
+        NodeKind::CaseExpr { scrutinee, when_clauses, else_branch, .. } => {
+            if let Some(n) = find_param_ref_in_node(scrutinee, params) { return Some(n); }
+            for w in when_clauses {
+                if let Some(n) = find_param_ref_in_node(&w.value, params) { return Some(n); }
+                if let Some(n) = find_param_ref_in_node(&w.result, params) { return Some(n); }
+            }
+            find_param_ref_in_node(else_branch, params)
+        }
+        NodeKind::TypeAnnotation { expr, .. } => find_param_ref_in_node(expr, params),
+        NodeKind::Conversion { expr, .. } => find_param_ref_in_node(expr, params),
+        NodeKind::FromEnum { value, .. } => find_param_ref_in_node(value, params),
+        NodeKind::FromUnion { value, .. } => find_param_ref_in_node(value, params),
+        NodeKind::NamedVariant { value, .. } => find_param_ref_in_node(value, params),
+        NodeKind::StructLiteral { fields } => {
+            for b in fields {
+                if let Some(n) = find_param_ref_in_node(&b.value, params) { return Some(n); }
+            }
+            None
+        }
+        NodeKind::ListLiteral { elements } | NodeKind::TupleLiteral { elements } => {
+            for e in elements {
+                if let Some(n) = find_param_ref_in_node(e, params) { return Some(n); }
+            }
+            None
+        }
+        NodeKind::Grouping { expr } => find_param_ref_in_node(expr, params),
+        NodeKind::StructOverride { base, overrides } => {
+            find_param_ref_in_node(base, params)
+                .or_else(|| find_param_ref_in_node(overrides, params))
+        }
+        NodeKind::StructExtension { base, extension } => {
+            find_param_ref_in_node(base, params)
+                .or_else(|| find_param_ref_in_node(extension, params))
+        }
+        NodeKind::FunctionCall { callee, args } => {
+            if let Some(n) = find_param_ref_in_node(callee, params) { return Some(n); }
+            for a in args {
+                if let Some(n) = find_param_ref_in_node(a, params) { return Some(n); }
+            }
+            None
+        }
+        NodeKind::StringLiteral { parts } => {
+            for p in parts {
+                if let StringPart::Interpolation(e) = p {
+                    if let Some(n) = find_param_ref_in_node(e, params) { return Some(n); }
+                }
+            }
+            None
+        }
+        NodeKind::FieldExtraction { source } => find_param_ref_in_node(source, params),
+        // Leaf kinds with no subexpressions that could reference a param.
+        NodeKind::IntegerLiteral { .. }
+        | NodeKind::FloatLiteral { .. }
+        | NodeKind::BoolLiteral { .. }
+        | NodeKind::NullLiteral
+        | NodeKind::UndefinedLiteral
+        | NodeKind::InfLiteral { .. }
+        | NodeKind::NanLiteral
+        | NodeKind::EnvRef
+        | NodeKind::StructImport { .. }
+        | NodeKind::DefaultForType { .. }
+        | NodeKind::FunctionExpr { .. } => None,
+    }
+}
+
+/// Detect an unconditional `undefined` literal in a default expression.
+/// A literal `undefined` (or anything that trivially yields it, like a
+/// type-annotation wrapper around `undefined`) is rejected statically.
+fn contains_undefined_literal(node: &Node) -> bool {
+    match &node.kind {
+        NodeKind::UndefinedLiteral => true,
+        NodeKind::Grouping { expr } => contains_undefined_literal(expr),
+        NodeKind::TypeAnnotation { expr, .. } => contains_undefined_literal(expr),
+        _ => false,
     }
 }

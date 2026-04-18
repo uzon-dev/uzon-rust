@@ -114,6 +114,29 @@ impl Evaluator {
                     self.validate_type_exists(type_name, return_type, scope, node)?;
                 }
 
+                // §3.8: Eagerly evaluate defaults in the enclosing scope to catch
+                // type mismatches and `undefined` defaults at definition time.
+                // (Spec permits either once-at-definition or once-per-call; we pick
+                // once-at-definition so errors surface even for uncalled functions.)
+                for param in params {
+                    if let Some(ref default_expr) = param.default {
+                        let val = self.eval_node(default_expr, scope, None)?;
+                        if val.is_undefined() {
+                            return Err(UzonError::type_error(
+                                format!(
+                                    "default value for parameter '{}' evaluates to undefined; \
+                                     'undefined' is not permitted as a default",
+                                    param.name
+                                ),
+                                default_expr.span.line, default_expr.span.col,
+                            ));
+                        }
+                        if let Some(type_name) = param.type_expr.path.last() {
+                            self.check_type_assertion(&val, type_name, default_expr)?;
+                        }
+                    }
+                }
+
                 let captured = scope.to_map();
                 Ok(Value::Function(UzonFunction {
                     params: params.clone(),
