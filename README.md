@@ -21,7 +21,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-uzon = "0.7"
+uzon = "0.9"
 ```
 
 ## Table of Contents
