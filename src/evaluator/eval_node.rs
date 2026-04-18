@@ -185,7 +185,25 @@ impl Evaluator {
     ) -> Result<Value> {
         let lv = self.eval_node(left, scope, exclude)?;
         if lv.is_undefined() {
-            return self.eval_node(right, scope, exclude);
+            // §5.7: the static type guarantee — even when the left operand is
+            // undefined at runtime, the static types of the two operands MUST
+            // match. If the left node carries a static type (via `to T` or
+            // `as T`), check the right against it.
+            let rv = self.eval_node(right, scope, exclude)?;
+            if let Some(static_type) = static_type_name(left) {
+                if !matches!(rv, Value::Null) && !rv.is_undefined()
+                    && !static_type_matches(&static_type, &rv)
+                {
+                    return Err(UzonError::type_error(
+                        format!(
+                            "'or else' operands must be the same type, expected {static_type}, got {}",
+                            rv.type_name()
+                        ),
+                        node.span.line, node.span.col,
+                    ));
+                }
+            }
+            return Ok(rv);
         }
         // §5.7: both operands MUST be the same type.
         // §3.5 rule 4: enum type-context inference for or else right operand.
@@ -482,4 +500,32 @@ impl Evaluator {
         }
         Ok(Value::String(result))
     }
+}
+
+/// If a node carries a trailing `as T` or `to T` annotation, return T.
+/// Used by `or else` to enforce the static type guarantee (§5.7) even when
+/// the left operand is undefined at runtime.
+fn static_type_name(node: &Node) -> Option<String> {
+    match &node.kind {
+        NodeKind::TypeAnnotation { type_expr, .. }
+        | NodeKind::Conversion { type_expr, .. } => type_expr.path.last().cloned(),
+        NodeKind::Grouping { expr } => static_type_name(expr),
+        _ => None,
+    }
+}
+
+/// Does a runtime value match the given static type name?
+fn static_type_matches(type_name: &str, val: &Value) -> bool {
+    use crate::value::{IntegerType, FloatType};
+    if type_name == "bool" { return matches!(val, Value::Bool(_)); }
+    if type_name == "string" { return matches!(val, Value::String(_)); }
+    if IntegerType::from_type_name(type_name).is_some() {
+        return matches!(val, Value::Integer(_) | Value::BigInteger(_));
+    }
+    if FloatType::from_type_name(type_name).is_some() {
+        return matches!(val, Value::Float(_));
+    }
+    // For named / structural types fall back to a conservative "yes" — we do
+    // not have enough information here to reject cleanly.
+    true
 }
