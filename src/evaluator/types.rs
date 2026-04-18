@@ -323,6 +323,20 @@ impl Evaluator {
         if let TypeDefKind::Struct { ref fields } = typedef.kind {
             let type_name_str = typedef.name.clone();
             if let Value::Struct(ref val_fields) = val {
+                // §6.3: nominal type identity — a value already stamped with
+                // a named struct type cannot be re-annotated as a different
+                // named struct type, even when the shapes match.
+                if let Some(ref existing) = val_fields.type_name {
+                    if existing != &type_name_str {
+                        return Err(UzonError::type_error(
+                            format!(
+                                "cannot annotate value of type {existing} as {type_name_str}; \
+                                 named struct types are nominal, not structural"
+                            ),
+                            node.span.line, node.span.col,
+                        ));
+                    }
+                }
                 // Check no extra fields
                 for key in val_fields.keys() {
                     if !fields.contains_key(key) {
