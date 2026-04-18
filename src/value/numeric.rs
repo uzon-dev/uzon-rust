@@ -387,6 +387,14 @@ impl UzonFloat {
     pub fn powf(&self, other: &Self) -> Result<Self, String> {
         let type_ann = Self::adopt_type(&self.type_ann, &other.type_ann)?;
         let explicit = self.explicit || other.explicit;
+        // §5.3: a negative base with a non-integer exponent would yield a
+        // complex number, which UZON does not support — runtime error.
+        if self.value < 0.0 && other.value.is_finite() && other.value.fract() != 0.0 {
+            return Err(format!(
+                "negative base ({}) with fractional exponent ({}) has no real result",
+                self.value, other.value
+            ));
+        }
         Ok(Self { value: self.value.powf(other.value), type_ann, explicit })
     }
 
