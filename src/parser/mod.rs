@@ -533,19 +533,18 @@ impl Parser {
                 None
             }
         } else {
-            // Multiple elements: lift the last element's trailing `as [T]` only
-            // if its type is a list type. An element-level `as Type` (non-list)
-            // is a per-element type annotation and must stay on the element.
+            // §3.4.1 / §9: the trailing `as type_expr` on the final element of
+            // an `are` binding is ALWAYS lifted to the list level, regardless
+            // of whether `type_expr` is a list form. A resulting list-vs-scalar
+            // mismatch (e.g., `ids are 1, 2, 3 as i32`) is a downstream type
+            // error — the parser's job is to apply the lift unconditionally.
+            // To annotate the last element individually, wrap it in parens.
             let last = elements.last().unwrap();
             if let NodeKind::TypeAnnotation { expr, type_expr } = &last.kind {
-                if type_expr.is_list {
-                    let inner = (**expr).clone();
-                    let ty = type_expr.clone();
-                    *elements.last_mut().unwrap() = inner;
-                    Some(ty)
-                } else {
-                    None
-                }
+                let inner = (**expr).clone();
+                let ty = type_expr.clone();
+                *elements.last_mut().unwrap() = inner;
+                Some(ty)
             } else {
                 None
             }
