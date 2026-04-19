@@ -346,15 +346,20 @@ impl Evaluator {
                         ));
                     }
                 }
-                // Check no missing fields
-                for key in fields.keys() {
-                    if !val_fields.contains_key(key) {
-                        return Err(UzonError::type_error(
-                            format!("missing field '{key}' required by type {type_name_str}"),
-                            node.span.line, node.span.col,
-                        ));
+                // §3.2 v0.10: fill in missing fields with their declared defaults
+                // in type-context positions (the caller supplied `as TypeName`).
+                if let Value::Struct(ref mut val_fields) = val {
+                    for (key, field_info) in fields {
+                        if !val_fields.contains_key(key) {
+                            val_fields.insert(key.clone(), field_info.default_value.clone());
+                        }
                     }
                 }
+                // Re-borrow for subsequent checks below
+                let val_fields = match &val {
+                    Value::Struct(m) => m,
+                    _ => unreachable!(),
+                };
                 // Check field type compatibility and annotations
                 for (key, field_info) in fields {
                     let val_field = &val_fields[key];

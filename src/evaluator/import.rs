@@ -119,6 +119,7 @@ impl Evaluator {
                             (k.clone(), StructFieldInfo {
                                 type_category: v.type_name().to_string(),
                                 type_annotation: annotation,
+                                default_value: v.clone(),
                             })
                         }).collect(),
                     },

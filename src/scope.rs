@@ -12,13 +12,17 @@ pub struct TypeDef {
     pub name: String,
 }
 
-/// Field type information for named struct conformance checking (§6.3).
+/// Field type information for named struct conformance checking (§6.3) and
+/// v0.10 field defaults (§3.2).
 #[derive(Debug, Clone)]
 pub struct StructFieldInfo {
     /// Runtime type category (e.g., "integer", "float", "string", "bool", "struct").
     pub type_category: String,
-    /// Type annotation if the field was defined with `as` (e.g., "i32", "f64").
+    /// Type annotation if the field was defined with `as` (e.g., "i32", "f64", "Point").
     pub type_annotation: Option<String>,
+    /// §3.2 v0.10: the field's declared value, used as the default when a
+    /// value of this named struct type is constructed with the field omitted.
+    pub default_value: Value,
 }
 
 #[derive(Debug, Clone)]
