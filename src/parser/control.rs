@@ -378,6 +378,7 @@ fn find_param_ref_in_node(node: &Node, params: &[String]) -> Option<String> {
         NodeKind::FromEnum { value, .. } => find_param_ref_in_node(value, params),
         NodeKind::FromUnion { value, .. } => find_param_ref_in_node(value, params),
         NodeKind::NamedVariant { value, .. } => find_param_ref_in_node(value, params),
+        NodeKind::VariantShorthand { inner, .. } => find_param_ref_in_node(inner, params),
         NodeKind::StructLiteral { fields } => {
             for b in fields {
                 if let Some(n) = find_param_ref_in_node(&b.value, params) { return Some(n); }

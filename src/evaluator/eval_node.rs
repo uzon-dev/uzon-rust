@@ -81,6 +81,17 @@ impl Evaluator {
             NodeKind::NamedVariant { value, tag, variants } => {
                 self.eval_named_variant(value, tag, variants, scope, exclude, node)
             }
+            NodeKind::VariantShorthand { variant_name, .. } => {
+                // §3.7 v0.10: variant_shorthand requires type context. When the
+                // evaluator reaches this node directly (no enclosing
+                // `as`/struct-field/parameter type), the tagged union type is
+                // unknown — a type error.
+                Err(UzonError::type_error(
+                    format!("variant shorthand '{variant_name}' requires a tagged union type context; \
+                             use 'value as Type named {variant_name}' or annotate with 'as TypeName'"),
+                    node.span.line, node.span.col,
+                ))
+            }
 
             NodeKind::StructLiteral { fields } => {
                 self.eval_struct_literal(fields, scope)
@@ -441,13 +452,43 @@ impl Evaluator {
                         node.span.line, node.span.col,
                     ));
                 }
+                crate::scope::TypeDefKind::TaggedUnion { variants } => {
+                    // §3.7 v0.10: the default of a tagged union is the default of
+                    // its first variant's inner type, wrapped in the variant tag.
+                    // "First" here is the iteration order of the variant map —
+                    // deterministic and matches declaration for most cases.
+                    let (first_name, first_inner) = variants.iter().next().ok_or_else(|| {
+                        UzonError::type_error(
+                            format!("tagged union '{}' has no variants", td.name),
+                            node.span.line, node.span.col,
+                        )
+                    })?;
+                    let inner_val = match first_inner {
+                        Some(t) if t == "null" => Value::Null,
+                        Some(t) => {
+                            let synthetic = TypeExpr {
+                                path: vec![t.clone()],
+                                is_list: false,
+                                inner: None,
+                                is_null: false,
+                                tuple_types: None,
+                                span: type_expr.span,
+                            };
+                            self.eval_default_for_type(&synthetic, scope, node)?
+                        }
+                        None => Value::Null,
+                    };
+                    return Ok(Value::TaggedUnion(UzonTaggedUnion::new(
+                        inner_val,
+                        first_name.clone(),
+                        variants.clone(),
+                        Some(td.name),
+                    )));
+                }
                 crate::scope::TypeDefKind::Union { .. }
-                | crate::scope::TypeDefKind::Struct { .. }
-                | crate::scope::TypeDefKind::TaggedUnion { .. } => {
-                    // §3.6: for union/struct/tagged-union defaults we would need the
-                    // original AST. For now, reject as "no default computable" — this
-                    // only matters when a named compound type is used as the first
-                    // member of another standalone union/tagged-union.
+                | crate::scope::TypeDefKind::Struct { .. } => {
+                    // §3.6: for union/struct defaults we would need the original
+                    // AST. Reject as "no default computable".
                     return Err(UzonError::type_error(
                         format!("cannot compute default value for named type '{}' in this context; use inline declaration with an explicit value", td.name),
                         node.span.line, node.span.col,

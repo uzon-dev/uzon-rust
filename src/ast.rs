@@ -159,6 +159,15 @@ pub enum NodeKind {
         tag: String,
         variants: Vec<(String, TypeExpr)>,
     },
+    /// `variant_name inner` — tagged union variant shorthand (§3.7 v0.10).
+    /// The target tagged union type is determined by context (via `as Type`,
+    /// struct field type, function parameter/return type). The evaluator
+    /// resolves the shorthand against the context type; if no type context is
+    /// available the shorthand is a type error.
+    VariantShorthand {
+        variant_name: String,
+        inner: Box<Node>,
+    },
 
     // === Compounds (§3) ===
     /// `{ field is value, ... }` — struct literal (§3.2).

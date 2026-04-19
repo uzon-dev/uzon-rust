@@ -533,14 +533,19 @@ impl Parser {
                 None
             }
         } else {
-            // Multiple elements: check if last is a bare TypeAnnotation
+            // Multiple elements: lift the last element's trailing `as [T]` only
+            // if its type is a list type. An element-level `as Type` (non-list)
+            // is a per-element type annotation and must stay on the element.
             let last = elements.last().unwrap();
             if let NodeKind::TypeAnnotation { expr, type_expr } = &last.kind {
-                // Lift: unwrap the TypeAnnotation from the last element
-                let inner = (**expr).clone();
-                let ty = type_expr.clone();
-                *elements.last_mut().unwrap() = inner;
-                Some(ty)
+                if type_expr.is_list {
+                    let inner = (**expr).clone();
+                    let ty = type_expr.clone();
+                    *elements.last_mut().unwrap() = inner;
+                    Some(ty)
+                } else {
+                    None
+                }
             } else {
                 None
             }

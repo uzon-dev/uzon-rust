@@ -277,6 +277,8 @@ impl Evaluator {
                     binding.value.span.col,
                 ));
             }
+        } else if let Some(val) = self.eval_are_binding_with_type_context(binding, scope)? {
+            val
         } else {
             self.eval_node(&binding.value, scope, Some(&binding.name))?
         };
@@ -320,6 +322,58 @@ impl Evaluator {
     }
 
     /// Apply list type annotation from `are ... as [Type]` bindings.
+    /// §3.5 + §3.7 v0.10: for `are ... as [Type]` bindings whose inner type is
+    /// a named struct or tagged union, evaluate each element with that type as
+    /// context so nested variant/struct-field shorthands resolve. Returns
+    /// `Some(value)` if the binding was handled, `None` if the caller should
+    /// fall through to the default `eval_node` path.
+    fn eval_are_binding_with_type_context(
+        &mut self,
+        binding: &Binding,
+        scope: &mut Scope,
+    ) -> Result<Option<Value>> {
+        let type_ann = match binding.list_type_annotation {
+            Some(ref ta) => ta,
+            None => return Ok(None),
+        };
+        if !type_ann.is_list {
+            return Ok(None);
+        }
+        let inner = match type_ann.inner {
+            Some(ref i) => i,
+            None => return Ok(None),
+        };
+        let element_type_name = match scope.resolve_type_path(&inner.path) {
+            Some(td) => match td.kind {
+                TypeDefKind::Struct { .. } | TypeDefKind::TaggedUnion { .. } => td.name,
+                _ => return Ok(None),
+            },
+            None => return Ok(None),
+        };
+        let elements = match &binding.value.kind {
+            NodeKind::ListLiteral { elements } => elements,
+            _ => return Ok(None),
+        };
+
+        let prev_in_ta = self.in_type_annotation;
+        self.in_type_annotation = true;
+        let mut resolved = Vec::with_capacity(elements.len());
+        let mut err: Option<UzonError> = None;
+        for elem in elements {
+            match self.eval_with_type_context(elem, inner, scope, Some(&binding.name)) {
+                Ok(v) => resolved.push(v),
+                Err(e) => { err = Some(e); break; }
+            }
+        }
+        self.in_type_annotation = prev_in_ta;
+        if let Some(e) = err { return Err(e); }
+        let mut list_val = Value::List(UzonList::with_type(resolved, element_type_name));
+        if let Value::List(ref mut list) = list_val {
+            self.validate_list_elements(&mut list.elements, inner, scope, &binding.value)?;
+        }
+        Ok(Some(list_val))
+    }
+
     fn apply_list_type_annotation(
         &mut self,
         binding: &Binding,
@@ -362,8 +416,15 @@ impl Evaluator {
                             resolved.push(v);
                         }
                         *value = Value::List(UzonList::with_type(resolved, enum_name.clone()));
+                        return Ok(());
                     }
-                } else if let Value::List(ref mut list) = *value {
+                }
+
+                // Note: named struct / tagged union element-type inference for
+                // `are` bindings runs earlier in `eval_are_binding_with_type_context`
+                // — by the time we reach here the value is already the right list.
+
+                if let Value::List(ref mut list) = *value {
                     if let Some(inner_type_name) = inner.path.last() {
                         for item in list.iter() {
                             if !item.is_null() {

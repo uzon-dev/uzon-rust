@@ -19,6 +19,40 @@ impl Evaluator {
         exclude: Option<&str>,
         node: &Node,
     ) -> Result<Value> {
+        // §3.5 rule 4 + §3.7 v0.10: a bare identifier matching a nullary
+        // tagged-union variant resolves to `null named variant` when annotated
+        // `as TaggedUnionType`. Binding still wins over variant.
+        if let NodeKind::Identifier { name } = &expr.kind {
+            if scope.get(name, None).is_none() {
+                if let Some(typedef) = scope.resolve_type_path(&type_expr.path) {
+                    if let TypeDefKind::TaggedUnion { variants } = &typedef.kind {
+                        if let Some(Some(inner_type)) = variants.get(name) {
+                            if inner_type == "null" {
+                                return Ok(Value::TaggedUnion(UzonTaggedUnion::new(
+                                    Value::Null,
+                                    name.clone(),
+                                    variants.clone(),
+                                    Some(typedef.name.clone()),
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // §3.7 v0.10: `variant_name inner as TaggedUnionType` — resolve the
+        // shorthand against the annotated tagged union type.
+        if let NodeKind::VariantShorthand { variant_name, inner } = &expr.kind {
+            if let Some(typedef) = scope.resolve_type_path(&type_expr.path) {
+                if let TypeDefKind::TaggedUnion { variants } = &typedef.kind {
+                    return self.resolve_variant_shorthand(
+                        variant_name, inner, variants, &typedef.name, scope, exclude, node,
+                    );
+                }
+            }
+        }
+
         // §6.3: `as TaggedUnionType` without `named` is a type error.
         // NamedVariant expressions already carry a tag, so they are exempt.
         if !matches!(expr.kind, NodeKind::NamedVariant { .. }) {
@@ -164,6 +198,38 @@ impl Evaluator {
             if let Some((enum_name, variants)) = enum_info {
                 return self.eval_list_enum_resolution(expr, &enum_name, &variants, inner, scope, exclude, node);
             }
+
+            // §3.5 + §3.7 v0.10: if the inner type is a named struct or tagged
+            // union, evaluate each list element with that type as context so
+            // nested variant and struct-field shorthands resolve.
+            let named_compound = scope.resolve_type_path(&inner.path).and_then(|td| {
+                match td.kind {
+                    TypeDefKind::Struct { .. } | TypeDefKind::TaggedUnion { .. } => Some(td.name),
+                    _ => None,
+                }
+            });
+            if let Some(element_type_name) = named_compound {
+                if let NodeKind::ListLiteral { elements } = &expr.kind {
+                    let prev_in_ta = self.in_type_annotation;
+                    self.in_type_annotation = true;
+                    let mut resolved = Vec::with_capacity(elements.len());
+                    let mut err: Option<UzonError> = None;
+                    for elem in elements {
+                        match self.eval_with_type_context(elem, inner, scope, exclude) {
+                            Ok(v) => resolved.push(v),
+                            Err(e) => { err = Some(e); break; }
+                        }
+                    }
+                    self.in_type_annotation = prev_in_ta;
+                    if let Some(e) = err { return Err(e); }
+                    // Validate each element against the declared inner type.
+                    let mut list_val = Value::List(UzonList::with_type(resolved, &element_type_name));
+                    if let Value::List(list) = &mut list_val {
+                        self.validate_list_elements(&mut list.elements, inner, scope, node)?;
+                    }
+                    return Ok(list_val);
+                }
+            }
         }
         // Non-enum list type annotation — evaluate the expression, then validate elements
         let mut val = self.eval_node(expr, scope, exclude)?;
@@ -254,23 +320,163 @@ impl Evaluator {
                             )));
                         }
                     }
+                    // §3.7 v0.10: bare identifier against a tagged union → nullary
+                    // variant shortcut (`e is cleared`).
+                    if let TypeDefKind::TaggedUnion { variants } = &td.kind {
+                        if let Some(Some(inner_type)) = variants.get(name) {
+                            if inner_type == "null" {
+                                return Ok(Value::TaggedUnion(UzonTaggedUnion::new(
+                                    Value::Null,
+                                    name.clone(),
+                                    variants.clone(),
+                                    Some(td.name.clone()),
+                                )));
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        // Struct literal against a named struct → field-aware evaluation so
-        // nested variant shorthand works.
-        if let NodeKind::StructLiteral { fields } = &expr.kind {
+        // §3.7 v0.10: `variant_name inner` against a tagged union target type.
+        if let NodeKind::VariantShorthand { variant_name, inner } = &expr.kind {
             if let Some(td) = scope.resolve_type_path(&target_type.path) {
-                if let TypeDefKind::Struct { fields: field_infos } = &td.kind {
-                    return self.eval_struct_literal_with_type_context(
-                        fields, field_infos, scope, exclude,
+                if let TypeDefKind::TaggedUnion { variants } = &td.kind {
+                    return self.resolve_variant_shorthand(
+                        variant_name, inner, variants, &td.name, scope, exclude, expr,
                     );
                 }
             }
         }
 
+        // §3.7 v0.10: `variant_name ( ... )` parses as a function call because
+        // LParen is excluded from `starts_variant_shorthand_inner` (to protect
+        // regular function calls). When the target type is a tagged union and
+        // the callee matches a variant that isn't a bound function, treat the
+        // call as variant shorthand: a single arg becomes the inner; multiple
+        // args become a tuple.
+        if let NodeKind::FunctionCall { callee, args } = &expr.kind {
+            if let NodeKind::Identifier { name } = &callee.kind {
+                let is_bound_fn = matches!(scope.get(name, exclude), Some(Value::Function(_)));
+                if !is_bound_fn {
+                    if let Some(td) = scope.resolve_type_path(&target_type.path) {
+                        if let TypeDefKind::TaggedUnion { variants } = &td.kind {
+                            if variants.contains_key(name) {
+                                let inner_node = if args.len() == 1 {
+                                    args[0].clone()
+                                } else {
+                                    Node::new(
+                                        NodeKind::TupleLiteral { elements: args.clone() },
+                                        expr.span.line, expr.span.col,
+                                    )
+                                };
+                                return self.resolve_variant_shorthand(
+                                    name, &inner_node, variants, &td.name, scope, exclude, expr,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Struct literal against a named struct → field-aware evaluation so
+        // nested variant shorthand works. §3.2 defaults are filled in by
+        // `eval_type_annotation_struct` after the literal fields are resolved.
+        if let NodeKind::StructLiteral { fields } = &expr.kind {
+            if let Some(td) = scope.resolve_type_path(&target_type.path) {
+                if let TypeDefKind::Struct { fields: field_infos } = &td.kind {
+                    let val = self.eval_struct_literal_with_type_context(
+                        fields, field_infos, scope, exclude,
+                    )?;
+                    return self.eval_type_annotation_struct(val, target_type, scope, expr);
+                }
+            }
+        }
+
         self.eval_node(expr, scope, exclude)
+    }
+
+    /// §3.7 v0.10: resolve a `variant_name inner` shorthand against a known
+    /// tagged-union type. Validates the variant name, evaluates the inner
+    /// expression with type context (for nested shorthand), adopts the
+    /// variant's declared numeric type on untyped scalars, and wraps in a
+    /// `TaggedUnion` value.
+    pub(crate) fn resolve_variant_shorthand(
+        &mut self,
+        variant_name: &str,
+        inner: &Node,
+        variants: &std::collections::BTreeMap<String, Option<String>>,
+        type_name: &str,
+        scope: &mut Scope,
+        exclude: Option<&str>,
+        node: &Node,
+    ) -> Result<Value> {
+        let inner_type = match variants.get(variant_name) {
+            Some(Some(it)) => it.clone(),
+            _ => {
+                let valid: Vec<&str> = variants.keys().map(|k| k.as_str()).collect();
+                return Err(UzonError::type_error(
+                    format!("'{variant_name}' is not a variant of tagged union '{type_name}'; valid variants: {}",
+                        valid.join(", ")),
+                    node.span.line, node.span.col,
+                ));
+            }
+        };
+
+        // Nullary variants reject an inner payload.
+        if inner_type == "null" {
+            return Err(UzonError::type_error(
+                format!("variant '{variant_name}' of '{type_name}' is nullary; use '{variant_name}' without an inner value"),
+                node.span.line, node.span.col,
+            ));
+        }
+
+        // If the variant's inner type is itself a named type, propagate type
+        // context so nested variant/struct shorthand resolves.
+        let synthetic = TypeExpr {
+            path: vec![inner_type.clone()],
+            is_list: false,
+            inner: None,
+            is_null: false,
+            tuple_types: None,
+            span: inner.span,
+        };
+        let mut val = if scope.resolve_type_path(&synthetic.path).is_some() {
+            self.eval_with_type_context(inner, &synthetic, scope, exclude)?
+        } else {
+            self.eval_node(inner, scope, exclude)?
+        };
+
+        Self::adopt_variant_type_public(&mut val, &inner_type);
+
+        Ok(Value::TaggedUnion(UzonTaggedUnion::new(
+            val,
+            variant_name,
+            variants.clone(),
+            Some(type_name.to_string()),
+        )))
+    }
+
+    /// Mirror of `adopt_variant_type` in enums.rs — adopts a variant's
+    /// declared numeric type on untyped scalars. Kept here to avoid a
+    /// cross-module visibility change.
+    fn adopt_variant_type_public(val: &mut Value, variant_type: &str) {
+        match val {
+            Value::Integer(n) if !n.explicit => {
+                if let Some(it) = IntegerType::from_type_name(variant_type) {
+                    n.type_ann = it;
+                    n.explicit = true;
+                }
+            }
+            Value::Float(f) if !f.explicit => {
+                if let Some(ft) = FloatType::from_type_name(variant_type) {
+                    f.type_ann = ft;
+                    f.explicit = true;
+                }
+            }
+            _ => {}
+        }
     }
 
     /// §3.5 rule 4 (v0.10): evaluate struct literal fields with per-field enum
@@ -342,7 +548,9 @@ impl Evaluator {
             span: binding.value.span,
         };
         match &typedef.kind {
-            TypeDefKind::Enum { .. } | TypeDefKind::Struct { .. } => {
+            TypeDefKind::Enum { .. }
+            | TypeDefKind::Struct { .. }
+            | TypeDefKind::TaggedUnion { .. } => {
                 self.eval_with_type_context(&binding.value, &synthetic, child_scope, exclude)
             }
             _ => self.eval_node(&binding.value, child_scope, exclude),
@@ -350,7 +558,7 @@ impl Evaluator {
     }
 
     /// Validate and annotate each element of an already-evaluated list against its inner type.
-    fn validate_list_elements(
+    pub(crate) fn validate_list_elements(
         &self,
         items: &mut [Value],
         inner: &TypeExpr,

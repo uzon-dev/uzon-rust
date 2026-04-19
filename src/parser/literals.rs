@@ -10,6 +10,33 @@ use super::Parser;
 impl Parser {
     // === Primary expressions ===
 
+    /// §3.7 v0.10: true when the current token starts a primary expression
+    /// that can follow a bare variant_name as the inner of a variant_shorthand.
+    /// Excludes LParen to avoid conflict with the function-call postfix.
+    fn starts_variant_shorthand_inner(&self) -> bool {
+        matches!(
+            self.peek_type(),
+            TokenType::Integer
+                | TokenType::Float
+                | TokenType::String
+                | TokenType::InterpStart
+                | TokenType::True
+                | TokenType::False
+                | TokenType::Null
+                | TokenType::Undefined
+                | TokenType::Inf
+                | TokenType::Nan
+                | TokenType::Env
+                | TokenType::LBrace
+                | TokenType::LBracket
+                | TokenType::If
+                | TokenType::Case
+                | TokenType::Function
+                | TokenType::Struct
+                | TokenType::Identifier
+        )
+    }
+
     pub(crate) fn parse_primary(&mut self) -> Result<Node> {
         let tok = self.peek().clone();
 
@@ -73,11 +100,28 @@ impl Parser {
             }
             TokenType::Identifier => {
                 self.advance();
-                Ok(Node::new(
-                    NodeKind::Identifier { name: tok.value },
+                let ident = Node::new(
+                    NodeKind::Identifier { name: tok.value.clone() },
                     tok.line,
                     tok.col,
-                ))
+                );
+                // §3.7 v0.10: variant_shorthand — `variant_name primary`. When
+                // the next token begins a primary (and is not a function-call
+                // paren or a postfix operator), parse it as the inner value.
+                // Final disambiguation happens in the evaluator via type
+                // context; without context the AST node yields a type error.
+                if self.starts_variant_shorthand_inner() {
+                    let inner = self.parse_primary()?;
+                    return Ok(Node::new(
+                        NodeKind::VariantShorthand {
+                            variant_name: tok.value,
+                            inner: Box::new(inner),
+                        },
+                        tok.line,
+                        tok.col,
+                    ));
+                }
+                Ok(ident)
             }
             TokenType::LBrace => self.parse_struct_literal(),
             TokenType::LBracket => self.parse_list_literal(),

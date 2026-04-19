@@ -223,6 +223,9 @@ impl Evaluator {
             NodeKind::FromEnum { value, .. } | NodeKind::FromUnion { value, .. } | NodeKind::NamedVariant { value, .. } => {
                 Self::collect_function_calls(value, func_names, calls, spans);
             }
+            NodeKind::VariantShorthand { inner, .. } => {
+                Self::collect_function_calls(inner, func_names, calls, spans);
+            }
             NodeKind::FunctionExpr { body_bindings, body_expr, .. } => {
                 Self::collect_function_calls(body_expr, func_names, calls, spans);
                 for bb in body_bindings {
@@ -328,6 +331,9 @@ impl Evaluator {
             | NodeKind::Grouping { expr }
             | NodeKind::FieldExtraction { source: expr } => {
                 self.collect_deps(expr, names, name_to_idx, _exclude, _scope, deps);
+            }
+            NodeKind::VariantShorthand { inner, .. } => {
+                self.collect_deps(inner, names, name_to_idx, _exclude, _scope, deps);
             }
             NodeKind::StructOverride { base, overrides } => {
                 self.collect_deps(base, names, name_to_idx, _exclude, _scope, deps);
