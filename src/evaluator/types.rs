@@ -492,7 +492,7 @@ impl Evaluator {
     pub(crate) fn eval_struct_literal_with_type_context(
         &mut self,
         literal_fields: &[Binding],
-        field_infos: &std::collections::BTreeMap<String, StructFieldInfo>,
+        field_infos: &indexmap::IndexMap<String, StructFieldInfo>,
         parent_scope: &mut Scope,
         exclude: Option<&str>,
     ) -> Result<Value> {
@@ -519,7 +519,7 @@ impl Evaluator {
     fn eval_field_with_type_context(
         &mut self,
         binding: &Binding,
-        field_infos: &std::collections::BTreeMap<String, StructFieldInfo>,
+        field_infos: &indexmap::IndexMap<String, StructFieldInfo>,
         child_scope: &mut Scope,
         exclude: Option<&str>,
     ) -> Result<Value> {

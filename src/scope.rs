@@ -3,6 +3,8 @@
 
 use std::collections::BTreeMap;
 
+use indexmap::IndexMap;
+
 use crate::value::Value;
 
 /// Type information registered with `called` (§6.2).
@@ -37,7 +39,8 @@ pub enum TypeDefKind {
         variants: BTreeMap<String, Option<String>>,
     },
     Struct {
-        fields: BTreeMap<String, StructFieldInfo>,
+        /// §11.1: fields are stored in declaration order.
+        fields: IndexMap<String, StructFieldInfo>,
     },
     Function {
         param_types: Vec<String>,
