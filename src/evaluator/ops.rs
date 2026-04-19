@@ -523,7 +523,11 @@ impl Evaluator {
                         None
                     }
                 });
-                Ok(Value::List(UzonList { elements: result, element_type }))
+                Ok(Value::List(UzonList {
+                    elements: result,
+                    element_type,
+                    type_name: items.type_name.clone(),
+                }))
             }
             _ => Err(UzonError::type_error(
                 format!("'**' requires string or list left operand, got {}", lv.type_name()),

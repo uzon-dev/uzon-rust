@@ -122,15 +122,17 @@ pub struct UzonList {
     /// Element type stored from `as [Type]` annotations, needed for roundtripping
     /// empty and all-null lists.
     pub element_type: Option<String>,
+    /// §5.16 R4 / §6.1: named list type assigned via `called` (nominal identity).
+    pub type_name: Option<String>,
 }
 
 impl UzonList {
     pub fn new(elements: Vec<Value>) -> Self {
-        Self { elements, element_type: None }
+        Self { elements, element_type: None, type_name: None }
     }
 
     pub fn with_type(elements: Vec<Value>, element_type: impl Into<String>) -> Self {
-        Self { elements, element_type: Some(element_type.into()) }
+        Self { elements, element_type: Some(element_type.into()), type_name: None }
     }
 }
 

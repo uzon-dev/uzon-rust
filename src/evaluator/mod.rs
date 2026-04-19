@@ -489,6 +489,10 @@ impl Evaluator {
     pub(crate) fn compound_type_name(val: &Value) -> String {
         match val {
             Value::List(list) => {
+                // §5.16 R4: named list type wins over structural element type.
+                if let Some(ref tn) = list.type_name {
+                    return tn.clone();
+                }
                 if let Some(ref et) = list.element_type {
                     return format!("[{et}]");
                 }
@@ -528,7 +532,7 @@ impl Evaluator {
             _ if type_name.starts_with('[') && type_name.ends_with(']') => {
                 // Compound list type like [i32] — create an empty list with element_type
                 let inner = &type_name[1..type_name.len()-1];
-                Value::List(UzonList { elements: vec![], element_type: Some(inner.to_string()) })
+                Value::List(UzonList { elements: vec![], element_type: Some(inner.to_string()), type_name: None })
             }
             _ if type_name.starts_with('(') && type_name.ends_with(')') => {
                 // Compound tuple type like (i32, string) — create an empty tuple

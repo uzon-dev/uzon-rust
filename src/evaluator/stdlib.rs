@@ -542,7 +542,11 @@ impl Evaluator {
             Value::List(items) => {
                 let mut elements = items.elements;
                 elements.reverse();
-                Ok(Value::List(UzonList { elements, element_type: items.element_type }))
+                Ok(Value::List(UzonList {
+                    elements,
+                    element_type: items.element_type,
+                    type_name: items.type_name,
+                }))
             }
             Value::String(s) => {
                 Ok(Value::String(s.chars().rev().collect()))
@@ -751,6 +755,8 @@ impl Evaluator {
                 node.span.line, node.span.col,
             )),
         };
+        let element_type = items.element_type.clone();
+        let type_name = items.type_name.clone();
         let mut results = Vec::new();
         for item in items {
             let result = self.call_function(&func, vec![item.clone()], node)?;
@@ -763,7 +769,8 @@ impl Evaluator {
                 )),
             }
         }
-        Ok(Value::list(results))
+        // §5.16 R4: preserve element_type and named list type.
+        Ok(Value::List(UzonList { elements: results, element_type, type_name }))
     }
 
     fn std_reduce(
@@ -833,8 +840,8 @@ impl Evaluator {
                 node.span.line, node.span.col,
             ));
         }
-        let mut items = match Self::unwrap_union_owned(list) {
-            Value::List(list) => list.elements,
+        let (mut items, element_type, type_name) = match Self::unwrap_union_owned(list) {
+            Value::List(list) => (list.elements, list.element_type, list.type_name),
             other => return Err(UzonError::type_error(
                 format!("std.sort first argument must be a list, got {}", other.type_name()),
                 node.span.line, node.span.col,
@@ -865,7 +872,8 @@ impl Evaluator {
                 }
             }
         }
-        Ok(Value::list(items))
+        // §5.16 R4: preserve element_type and named list type.
+        Ok(Value::List(UzonList { elements: items, element_type, type_name }))
     }
 
     /// Helper to call a function value with given argument values.

@@ -149,6 +149,13 @@ impl Evaluator {
             }
         }
 
+        // §6.3 R7: untyped literal adopts a union member type
+        if let Some(typedef) = scope.resolve_type_path(&type_expr.path) {
+            if let TypeDefKind::Union { types } = &typedef.kind {
+                return Self::eval_type_annotation_union(val, types, node);
+            }
+        }
+
         // §6.1: Validate type name exists before proceeding
         if let Some(type_name) = type_expr.path.last() {
             self.validate_type_exists(type_name, type_expr, scope, node)?;
@@ -812,6 +819,79 @@ impl Evaluator {
             }
         }
         Ok(val)
+    }
+
+    /// §6.3 R7: a value applied to a named union adopts the first member type
+    /// whose category exactly matches the literal's category (integer / float /
+    /// string / bool). When no exact-match member exists, an untyped integer
+    /// literal falls back to the first float member (integer-to-float
+    /// promotion). Float literals never demote to integer members.
+    fn eval_type_annotation_union(mut val: Value, types: &[String], node: &Node) -> Result<Value> {
+        // §6.1: null is compatible with any type
+        if matches!(val, Value::Null) {
+            return Ok(val);
+        }
+
+        if let Value::Integer(ref mut n) = val {
+            if !n.explicit {
+                for tn in types {
+                    if let Some(it) = IntegerType::from_type_name(tn) {
+                        n.type_ann = it;
+                        n.explicit = true;
+                        return Ok(val);
+                    }
+                }
+                // Integer → float promotion fallback
+                let int_value = n.value;
+                for tn in types {
+                    if let Some(ft) = FloatType::from_type_name(tn) {
+                        return Ok(Value::Float(UzonFloat::with_type(int_value as f64, ft)));
+                    }
+                }
+                return Err(UzonError::type_error(
+                    format!(
+                        "integer literal does not match any member of union {}",
+                        types.join(", ")
+                    ),
+                    node.span.line, node.span.col,
+                ));
+            }
+        }
+
+        if let Value::Float(ref mut f) = val {
+            if !f.explicit {
+                for tn in types {
+                    if let Some(ft) = FloatType::from_type_name(tn) {
+                        f.type_ann = ft;
+                        f.explicit = true;
+                        return Ok(val);
+                    }
+                }
+                return Err(UzonError::type_error(
+                    format!(
+                        "float literal does not match any member of union {}",
+                        types.join(", ")
+                    ),
+                    node.span.line, node.span.col,
+                ));
+            }
+        }
+
+        // Typed value (explicit numerics, strings, bools, other): the value's
+        // specific type name must appear in the union member list.
+        let actual = Self::specific_type_name(&val);
+        if types.iter().any(|t| t == &actual) {
+            return Ok(val);
+        }
+
+        Err(UzonError::type_error(
+            format!(
+                "{} does not match any member of union {}",
+                actual,
+                types.join(", ")
+            ),
+            node.span.line, node.span.col,
+        ))
     }
 
     pub(crate) fn check_type_assertion(&self, val: &Value, type_name: &str, node: &Node) -> Result<()> {
