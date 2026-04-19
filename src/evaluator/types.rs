@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: © 2026 Suho Kang
 // SPDX-License-Identifier: MIT
 
+use indexmap::IndexMap;
+
 use crate::ast::*;
 use crate::error::{Result, UzonError};
-use crate::scope::{Scope, TypeDef, TypeDefKind};
+use crate::scope::{Scope, StructFieldInfo, TypeDef, TypeDefKind};
 use crate::value::*;
 
 use super::Evaluator;
@@ -63,6 +65,25 @@ impl Evaluator {
             let result = self.eval_type_annotation_list_from_ast(expr, type_expr, scope, exclude, node);
             self.in_type_annotation = prev_in_ta;
             return result;
+        }
+
+        // §3.5 rule 4 (v0.10): when the expression is a struct literal and the
+        // target type is a named struct, evaluate each field with type context
+        // so bare identifiers can resolve as enum variants. Bindings still win
+        // over variants (rule 4 reversal).
+        if let NodeKind::StructLiteral { fields: literal_fields } = &expr.kind {
+            if let Some(typedef) = scope.resolve_type_path(&type_expr.path) {
+                if let TypeDefKind::Struct { fields: field_infos } = &typedef.kind {
+                    let prev_in_ta = self.in_type_annotation;
+                    self.in_type_annotation = true;
+                    let val = self.eval_struct_literal_with_type_context(
+                        literal_fields, field_infos, scope, exclude,
+                    );
+                    self.in_type_annotation = prev_in_ta;
+                    let val = val?;
+                    return self.eval_type_annotation_struct(val, type_expr, scope, node);
+                }
+            }
         }
 
         // §4.2: suppress default i64 range check for integer literals inside `as`
@@ -204,6 +225,128 @@ impl Evaluator {
         }
         // If the expression isn't a list literal, evaluate normally
         self.eval_node(expr, scope, exclude)
+    }
+
+    /// §3.5 rule 4 (v0.10): evaluate an expression with a known target-type
+    /// context. Handles the bare-identifier-to-enum-variant shortcut and
+    /// the struct-literal-with-enum-field-context path; falls through to a
+    /// normal `eval_node` when no shortcut applies.
+    ///
+    /// Bindings win over variants (rule 4 reversal) — if a binding with the
+    /// same name is in scope, the identifier is resolved as a binding.
+    pub(crate) fn eval_with_type_context(
+        &mut self,
+        expr: &Node,
+        target_type: &TypeExpr,
+        scope: &mut Scope,
+        exclude: Option<&str>,
+    ) -> Result<Value> {
+        // Bare identifier against a named enum → variant shortcut.
+        if let NodeKind::Identifier { name } = &expr.kind {
+            if scope.get(name, None).is_none() {
+                if let Some(td) = scope.resolve_type_path(&target_type.path) {
+                    if let TypeDefKind::Enum { variants } = &td.kind {
+                        if variants.contains(name) {
+                            return Ok(Value::Enum(UzonEnum::new(
+                                name.clone(),
+                                variants.clone(),
+                                Some(td.name.clone()),
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Struct literal against a named struct → field-aware evaluation so
+        // nested variant shorthand works.
+        if let NodeKind::StructLiteral { fields } = &expr.kind {
+            if let Some(td) = scope.resolve_type_path(&target_type.path) {
+                if let TypeDefKind::Struct { fields: field_infos } = &td.kind {
+                    return self.eval_struct_literal_with_type_context(
+                        fields, field_infos, scope, exclude,
+                    );
+                }
+            }
+        }
+
+        self.eval_node(expr, scope, exclude)
+    }
+
+    /// §3.5 rule 4 (v0.10): evaluate struct literal fields with per-field enum
+    /// type context so bare identifiers can resolve as variants.
+    ///
+    /// Resolution per field:
+    /// 1. If the field's declared type is a named enum and the binding value is
+    ///    a bare identifier, prefer a scope binding with that name (rule 4
+    ///    reversal); otherwise resolve the identifier as the matching variant.
+    /// 2. If the binding value is itself a struct literal and the field type is
+    ///    a named struct, recurse — nested variant shorthand works.
+    /// 3. Otherwise evaluate normally.
+    pub(crate) fn eval_struct_literal_with_type_context(
+        &mut self,
+        literal_fields: &[Binding],
+        field_infos: &std::collections::BTreeMap<String, StructFieldInfo>,
+        parent_scope: &mut Scope,
+        exclude: Option<&str>,
+    ) -> Result<Value> {
+        let mut child_scope = Scope::with_parent(parent_scope.clone());
+        for binding in literal_fields {
+            let value = self.eval_field_with_type_context(
+                binding, field_infos, &mut child_scope, exclude,
+            )?;
+            child_scope.define(binding.name.clone(), value);
+        }
+
+        let scope_map = child_scope.to_map();
+        let mut result = IndexMap::with_capacity(literal_fields.len());
+        for field in literal_fields {
+            if let Some(val) = scope_map.get(&field.name) {
+                result.insert(field.name.clone(), val.clone());
+            }
+        }
+        Ok(Value::Struct(UzonStruct::new(result)))
+    }
+
+    /// Evaluate a single struct-literal binding with awareness of the declared
+    /// field type (used for enum variant shorthand and nested named structs).
+    fn eval_field_with_type_context(
+        &mut self,
+        binding: &Binding,
+        field_infos: &std::collections::BTreeMap<String, StructFieldInfo>,
+        child_scope: &mut Scope,
+        exclude: Option<&str>,
+    ) -> Result<Value> {
+        let field_info = match field_infos.get(&binding.name) {
+            Some(info) => info,
+            None => return self.eval_node(&binding.value, child_scope, exclude),
+        };
+        let ann = match &field_info.type_annotation {
+            Some(a) => a,
+            None => return self.eval_node(&binding.value, child_scope, exclude),
+        };
+        let typedef = match child_scope.get_type(ann).cloned() {
+            Some(td) => td,
+            None => return self.eval_node(&binding.value, child_scope, exclude),
+        };
+
+        // Synthesize a TypeExpr for the annotation and dispatch to the
+        // type-context-aware evaluator so nested struct-field and enum
+        // variant shortcuts both work.
+        let synthetic = TypeExpr {
+            path: vec![ann.clone()],
+            is_list: false,
+            inner: None,
+            is_null: false,
+            tuple_types: None,
+            span: binding.value.span,
+        };
+        match &typedef.kind {
+            TypeDefKind::Enum { .. } | TypeDefKind::Struct { .. } => {
+                self.eval_with_type_context(&binding.value, &synthetic, child_scope, exclude)
+            }
+            _ => self.eval_node(&binding.value, child_scope, exclude),
+        }
     }
 
     /// Validate and annotate each element of an already-evaluated list against its inner type.

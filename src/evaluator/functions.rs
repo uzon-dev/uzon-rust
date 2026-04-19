@@ -34,10 +34,16 @@ impl Evaluator {
             )),
         };
 
-        // Evaluate arguments before entering function body mode
+        // Evaluate arguments before entering function body mode. §3.5 rule 4:
+        // when the parameter type is a named enum or struct, pass that type as
+        // context so bare variant names and nested struct literals resolve.
         let mut arg_vals = Vec::with_capacity(args.len());
-        for arg in args {
-            let val = self.eval_node(arg, scope, exclude)?;
+        for (i, arg) in args.iter().enumerate() {
+            let val = if let Some(param) = func.params.get(i) {
+                self.eval_with_type_context(arg, &param.type_expr, scope, exclude)?
+            } else {
+                self.eval_node(arg, scope, exclude)?
+            };
             // §3.1: undefined as argument is a runtime error
             if val.is_undefined() {
                 return Err(UzonError::runtime(
@@ -149,7 +155,11 @@ impl Evaluator {
         self.in_function_body = true;
 
         self.eval_bindings(&func.body_bindings, &mut func_scope)?;
-        let result = self.eval_node(&func.body_expr, &mut func_scope, None)?;
+        // §3.5 rule 4: pass the return type as context so a bare variant name
+        // in the final expression resolves to that variant.
+        let result = self.eval_with_type_context(
+            &func.body_expr, &func.return_type, &mut func_scope, None,
+        )?;
 
         self.in_function_body = prev_in_function_body;
 
