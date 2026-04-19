@@ -3,7 +3,7 @@
 
 [package]
 name = "uzon"
-version = "0.9.0"
+version = "0.10.0"
 edition = "2024"
 description = "Parser, evaluator, and value toolkit for UZON — a typed, human-readable data expression format"
 license = "MIT"
