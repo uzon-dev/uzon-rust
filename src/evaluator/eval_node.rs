@@ -115,6 +115,15 @@ impl Evaluator {
             }
 
             NodeKind::FunctionExpr { params, return_type, body_bindings, body_expr } => {
+                // §4.5: literal 'undefined' as the function body's final (return)
+                // expression is a type error.
+                if matches!(body_expr.kind, NodeKind::UndefinedLiteral) {
+                    return Err(UzonError::type_error(
+                        "literal 'undefined' is not allowed as a function body's final expression; \
+                         return an expression that evaluates to undefined instead",
+                        body_expr.span.line, body_expr.span.col,
+                    ));
+                }
                 // §6.2: Validate parameter and return type names at definition time
                 for param in params {
                     if let Some(type_name) = param.type_expr.path.last() {
@@ -194,6 +203,21 @@ impl Evaluator {
         exclude: Option<&str>,
         node: &Node,
     ) -> Result<Value> {
+        // §4.5: literal 'undefined' is restricted to `is`/`is not` operands.
+        if matches!(left.kind, NodeKind::UndefinedLiteral) {
+            return Err(UzonError::type_error(
+                "literal 'undefined' is not allowed as 'or else' left operand; \
+                 use an expression that may produce undefined (e.g., `env.MISSING`)",
+                left.span.line, left.span.col,
+            ));
+        }
+        if matches!(right.kind, NodeKind::UndefinedLiteral) {
+            return Err(UzonError::type_error(
+                "literal 'undefined' is not allowed as 'or else' right operand; \
+                 use an expression or omit the fallback",
+                right.span.line, right.span.col,
+            ));
+        }
         let lv = self.eval_node(left, scope, exclude)?;
         if lv.is_undefined() {
             // §5.7: the static type guarantee — even when the left operand is
@@ -278,6 +302,21 @@ impl Evaluator {
         exclude: Option<&str>,
         node: &Node,
     ) -> Result<Value> {
+        // §4.5: literal 'undefined' is restricted to `is`/`is not` operands.
+        if matches!(then_branch.kind, NodeKind::UndefinedLiteral) {
+            return Err(UzonError::type_error(
+                "literal 'undefined' is not allowed as 'then' branch; \
+                 use an expression that may produce undefined",
+                then_branch.span.line, then_branch.span.col,
+            ));
+        }
+        if matches!(else_branch.kind, NodeKind::UndefinedLiteral) {
+            return Err(UzonError::type_error(
+                "literal 'undefined' is not allowed as 'else' branch; \
+                 use an expression that may produce undefined",
+                else_branch.span.line, else_branch.span.col,
+            ));
+        }
         let cond = self.eval_node(condition, scope, exclude)?;
         let cond = Self::unwrap_union_owned(cond);
         match cond {

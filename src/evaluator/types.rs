@@ -827,9 +827,18 @@ impl Evaluator {
     /// literal falls back to the first float member (integer-to-float
     /// promotion). Float literals never demote to integer members.
     fn eval_type_annotation_union(mut val: Value, types: &[String], node: &Node) -> Result<Value> {
-        // §6.1: null is compatible with any type
+        // §6.1 R6: `null as U` requires `null` to be an explicit member of U.
         if matches!(val, Value::Null) {
-            return Ok(val);
+            if types.iter().any(|t| t == "null") {
+                return Ok(val);
+            }
+            return Err(UzonError::type_error(
+                format!(
+                    "cannot cast null to union {}; add 'null' as a member to allow null",
+                    types.join(", ")
+                ),
+                node.span.line, node.span.col,
+            ));
         }
 
         if let Value::Integer(ref mut n) = val {
@@ -895,9 +904,21 @@ impl Evaluator {
     }
 
     pub(crate) fn check_type_assertion(&self, val: &Value, type_name: &str, node: &Node) -> Result<()> {
-        // null is compatible with any type in annotation context
+        // §6.1 R6: `null as T` is valid only when T is `null` itself. Union/
+        // tagged-union/struct cases are handled by dedicated paths earlier in
+        // `eval_type_annotation`; by the time we reach here, any remaining T
+        // must carry an actual null value itself.
         if matches!(val, Value::Null) {
-            return Ok(());
+            if type_name == "null" {
+                return Ok(());
+            }
+            return Err(UzonError::type_error(
+                format!(
+                    "cannot cast null to {type_name}; 'null as T' requires T to be \
+                     'null', a union including null, or a tagged-union null variant"
+                ),
+                node.span.line, node.span.col,
+            ));
         }
 
         if let Some(int_type) = IntegerType::from_type_name(type_name) {

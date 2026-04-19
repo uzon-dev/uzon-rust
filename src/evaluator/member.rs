@@ -45,6 +45,12 @@ impl Evaluator {
             }
             Value::List(items) => self.access_list_or_tuple(items, member),
             Value::Tuple(t) => self.access_list_or_tuple(&t.elements, member),
+            // §5.12 R4: member access on a function value is a type error —
+            // functions have no fields.
+            Value::Function(_) => Err(UzonError::type_error(
+                format!("cannot access member '{member}' on a function value; functions have no fields"),
+                node.span.line, node.span.col,
+            )),
             _ => Ok(Value::Undefined),
         }
     }
