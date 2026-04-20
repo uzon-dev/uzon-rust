@@ -128,13 +128,16 @@ impl Evaluator {
                             }
                             _ => {}
                         }
-                        // Structural check: fields must match
-                        let first_keys: Vec<&String> = first.keys().collect();
-                        let s_keys: Vec<&String> = s.keys().collect();
+                        // Structural check: fields must match as a set (§3.2.1
+                        // structural equivalence is order-independent).
+                        let first_keys: std::collections::BTreeSet<&String> = first.keys().collect();
+                        let s_keys: std::collections::BTreeSet<&String> = s.keys().collect();
                         if first_keys != s_keys {
+                            let first_ordered: Vec<&String> = first.keys().collect();
+                            let s_ordered: Vec<&String> = s.keys().collect();
                             return Err(UzonError::type_error(
                                 format!("list struct elements have different fields: {:?} vs {:?}",
-                                    first_keys, s_keys),
+                                    first_ordered, s_ordered),
                                 node.span.line, node.span.col,
                             ));
                         }
