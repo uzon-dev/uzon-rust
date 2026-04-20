@@ -17,6 +17,21 @@ pub(crate) struct RecursiveCall {
 }
 
 impl Evaluator {
+    /// Unwrap TypeAnnotation / Conversion wrappers to reach the underlying
+    /// FunctionExpr. Returns `(params, return_type, body_bindings, body_expr)`
+    /// or `None` if the node is not (or does not wrap) a function expression.
+    pub(crate) fn function_expr(node: &Node) -> Option<(&[FunctionParam], &TypeExpr, &[Binding], &Node)> {
+        match &node.kind {
+            NodeKind::FunctionExpr { params, return_type, body_bindings, body_expr } => {
+                Some((params, return_type, body_bindings, body_expr))
+            }
+            NodeKind::TypeAnnotation { expr, .. }
+            | NodeKind::Conversion { expr, .. }
+            | NodeKind::Grouping { expr } => Self::function_expr(expr),
+            _ => None,
+        }
+    }
+
     // === Dependency resolution (Kahn's algorithm) ===
 
     /// Returns `(order, cycle_indices)` where `order` contains indices of non-cycle
@@ -74,9 +89,13 @@ impl Evaluator {
 
     /// §3.8: Static check that function call graph is a DAG (no recursion).
     /// Returns recursive call sites with their spans (empty if no cycles).
+    ///
+    /// Call edges are conservative: when a function calls a parameter whose
+    /// type is a named function type, the call graph includes edges to every
+    /// function in the document whose signature matches that type.
     pub(crate) fn check_function_call_dag(&self, bindings: &[Binding]) -> Vec<RecursiveCall> {
         let func_names: HashSet<&str> = bindings.iter()
-            .filter(|b| matches!(b.value.kind, NodeKind::FunctionExpr { .. }))
+            .filter(|b| Self::function_expr(&b.value).is_some())
             .map(|b| b.name.as_str())
             .collect();
 
@@ -84,15 +103,70 @@ impl Evaluator {
             return Vec::new();
         }
 
+        // Signature of each function binding, keyed by the binding's name.
+        // Signature is (param type names in order, return type name).
+        let mut signatures: HashMap<&str, (Vec<String>, String)> = HashMap::new();
+        for b in bindings {
+            if let Some((params, return_type, _, _)) = Self::function_expr(&b.value) {
+                let sig = (
+                    params.iter()
+                        .map(|p| p.type_expr.path.last().cloned().unwrap_or_default())
+                        .collect(),
+                    return_type.path.last().cloned().unwrap_or_default(),
+                );
+                signatures.insert(b.name.as_str(), sig);
+            }
+        }
+
+        // Named function types (`called T` on a function binding) map to their
+        // signatures. Used to decide whether a parameter's declared type is a
+        // function type, and if so, what signature it requires.
+        let mut named_func_types: HashMap<&str, (Vec<String>, String)> = HashMap::new();
+        for b in bindings {
+            if let Some(ref called) = b.called {
+                if let Some(sig) = signatures.get(b.name.as_str()) {
+                    named_func_types.insert(called.as_str(), sig.clone());
+                }
+            }
+        }
+
+        // Group top-level function bindings by their structural signature.
+        let mut by_sig: HashMap<(Vec<String>, String), Vec<&str>> = HashMap::new();
+        for (&name, sig) in &signatures {
+            by_sig.entry(sig.clone()).or_default().push(name);
+        }
+
         let mut call_graph: HashMap<&str, HashSet<&str>> = HashMap::new();
         let mut call_spans: HashMap<&str, HashMap<&str, Span>> = HashMap::new();
         for binding in bindings {
-            if let NodeKind::FunctionExpr { body_bindings, body_expr, .. } = &binding.value.kind {
+            if let Some((params, _, body_bindings, body_expr)) = Self::function_expr(&binding.value) {
                 let mut calls = HashSet::new();
                 let mut spans = HashMap::new();
-                Self::collect_function_calls(body_expr, &func_names, &mut calls, &mut spans);
+
+                // Parameters with function type: map param name → the set of
+                // top-level functions whose signature matches the param's type.
+                let mut param_targets: HashMap<&str, Vec<&str>> = HashMap::new();
+                for p in params {
+                    let Some(last) = p.type_expr.path.last() else { continue };
+                    let Some(sig) = named_func_types.get(last.as_str()) else { continue };
+                    if let Some(targets) = by_sig.get(sig) {
+                        let filtered: Vec<&str> = targets.iter()
+                            .copied()
+                            .filter(|n| *n != binding.name.as_str())
+                            .collect();
+                        if !filtered.is_empty() {
+                            param_targets.insert(p.name.as_str(), filtered);
+                        }
+                    }
+                }
+
+                Self::collect_function_calls_ext(
+                    body_expr, &func_names, &param_targets, &mut calls, &mut spans,
+                );
                 for bb in body_bindings {
-                    Self::collect_function_calls(&bb.value, &func_names, &mut calls, &mut spans);
+                    Self::collect_function_calls_ext(
+                        &bb.value, &func_names, &param_targets, &mut calls, &mut spans,
+                    );
                 }
                 call_graph.insert(binding.name.as_str(), calls);
                 call_spans.insert(binding.name.as_str(), spans);
@@ -144,9 +218,13 @@ impl Evaluator {
         result
     }
 
-    pub(crate) fn collect_function_calls<'a>(
+    /// §3.8 conservative higher-order edges: when the callee is a parameter
+    /// whose type is a named function
+    /// type, add edges to every top-level function whose signature matches.
+    pub(crate) fn collect_function_calls_ext<'a>(
         node: &'a Node,
         func_names: &HashSet<&str>,
+        param_targets: &HashMap<&str, Vec<&'a str>>,
         calls: &mut HashSet<&'a str>,
         spans: &mut HashMap<&'a str, Span>,
     ) {
@@ -156,80 +234,85 @@ impl Evaluator {
                     if func_names.contains(name.as_str()) {
                         calls.insert(name.as_str());
                         spans.entry(name.as_str()).or_insert(node.span);
+                    } else if let Some(targets) = param_targets.get(name.as_str()) {
+                        for &t in targets {
+                            calls.insert(t);
+                            spans.entry(t).or_insert(node.span);
+                        }
                     }
                 }
-                Self::collect_function_calls(callee, func_names, calls, spans);
+                Self::collect_function_calls_ext(callee, func_names, param_targets, calls, spans);
                 for arg in args {
-                    Self::collect_function_calls(arg, func_names, calls, spans);
+                    Self::collect_function_calls_ext(arg, func_names, param_targets, calls, spans);
                 }
             }
             NodeKind::MemberAccess { object, .. } => {
-                Self::collect_function_calls(object, func_names, calls, spans);
+                Self::collect_function_calls_ext(object, func_names, param_targets, calls, spans);
             }
             NodeKind::BinaryOp { left, right, .. } => {
-                Self::collect_function_calls(left, func_names, calls, spans);
-                Self::collect_function_calls(right, func_names, calls, spans);
+                Self::collect_function_calls_ext(left, func_names, param_targets, calls, spans);
+                Self::collect_function_calls_ext(right, func_names, param_targets, calls, spans);
             }
             NodeKind::UnaryOp { operand, .. } => {
-                Self::collect_function_calls(operand, func_names, calls, spans);
+                Self::collect_function_calls_ext(operand, func_names, param_targets, calls, spans);
             }
             NodeKind::IfExpr { condition, then_branch, else_branch } => {
-                Self::collect_function_calls(condition, func_names, calls, spans);
-                Self::collect_function_calls(then_branch, func_names, calls, spans);
-                Self::collect_function_calls(else_branch, func_names, calls, spans);
+                Self::collect_function_calls_ext(condition, func_names, param_targets, calls, spans);
+                Self::collect_function_calls_ext(then_branch, func_names, param_targets, calls, spans);
+                Self::collect_function_calls_ext(else_branch, func_names, param_targets, calls, spans);
             }
             NodeKind::CaseExpr { scrutinee, when_clauses, else_branch, .. } => {
-                Self::collect_function_calls(scrutinee, func_names, calls, spans);
+                Self::collect_function_calls_ext(scrutinee, func_names, param_targets, calls, spans);
                 for wc in when_clauses {
-                    Self::collect_function_calls(&wc.value, func_names, calls, spans);
-                    Self::collect_function_calls(&wc.result, func_names, calls, spans);
+                    Self::collect_function_calls_ext(&wc.value, func_names, param_targets, calls, spans);
+                    Self::collect_function_calls_ext(&wc.result, func_names, param_targets, calls, spans);
                 }
-                Self::collect_function_calls(else_branch, func_names, calls, spans);
+                Self::collect_function_calls_ext(else_branch, func_names, param_targets, calls, spans);
             }
             NodeKind::ListLiteral { elements } | NodeKind::TupleLiteral { elements } => {
                 for elem in elements {
-                    Self::collect_function_calls(elem, func_names, calls, spans);
+                    Self::collect_function_calls_ext(elem, func_names, param_targets, calls, spans);
                 }
             }
             NodeKind::StructLiteral { fields } => {
                 for binding in fields {
-                    Self::collect_function_calls(&binding.value, func_names, calls, spans);
+                    Self::collect_function_calls_ext(&binding.value, func_names, param_targets, calls, spans);
                 }
             }
             NodeKind::StructOverride { base, overrides } | NodeKind::StructExtension { base, extension: overrides } => {
-                Self::collect_function_calls(base, func_names, calls, spans);
-                Self::collect_function_calls(overrides, func_names, calls, spans);
+                Self::collect_function_calls_ext(base, func_names, param_targets, calls, spans);
+                Self::collect_function_calls_ext(overrides, func_names, param_targets, calls, spans);
             }
             NodeKind::TypeAnnotation { expr, .. } | NodeKind::Conversion { expr, .. } => {
-                Self::collect_function_calls(expr, func_names, calls, spans);
+                Self::collect_function_calls_ext(expr, func_names, param_targets, calls, spans);
             }
             NodeKind::StringLiteral { parts } => {
                 for part in parts {
                     if let StringPart::Interpolation(expr) = part {
-                        Self::collect_function_calls(expr, func_names, calls, spans);
+                        Self::collect_function_calls_ext(expr, func_names, param_targets, calls, spans);
                     }
                 }
             }
             NodeKind::FieldExtraction { source } => {
-                Self::collect_function_calls(source, func_names, calls, spans);
+                Self::collect_function_calls_ext(source, func_names, param_targets, calls, spans);
             }
             NodeKind::Grouping { expr } => {
-                Self::collect_function_calls(expr, func_names, calls, spans);
+                Self::collect_function_calls_ext(expr, func_names, param_targets, calls, spans);
             }
             NodeKind::OrElse { left, right } => {
-                Self::collect_function_calls(left, func_names, calls, spans);
-                Self::collect_function_calls(right, func_names, calls, spans);
+                Self::collect_function_calls_ext(left, func_names, param_targets, calls, spans);
+                Self::collect_function_calls_ext(right, func_names, param_targets, calls, spans);
             }
             NodeKind::FromEnum { value, .. } | NodeKind::FromUnion { value, .. } | NodeKind::NamedVariant { value, .. } => {
-                Self::collect_function_calls(value, func_names, calls, spans);
+                Self::collect_function_calls_ext(value, func_names, param_targets, calls, spans);
             }
             NodeKind::VariantShorthand { inner, .. } => {
-                Self::collect_function_calls(inner, func_names, calls, spans);
+                Self::collect_function_calls_ext(inner, func_names, param_targets, calls, spans);
             }
             NodeKind::FunctionExpr { body_bindings, body_expr, .. } => {
-                Self::collect_function_calls(body_expr, func_names, calls, spans);
+                Self::collect_function_calls_ext(body_expr, func_names, param_targets, calls, spans);
                 for bb in body_bindings {
-                    Self::collect_function_calls(&bb.value, func_names, calls, spans);
+                    Self::collect_function_calls_ext(&bb.value, func_names, param_targets, calls, spans);
                 }
             }
             _ => {}
