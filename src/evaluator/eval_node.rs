@@ -524,10 +524,21 @@ impl Evaluator {
                         Some(td.name),
                     )));
                 }
-                crate::scope::TypeDefKind::Union { .. }
-                | crate::scope::TypeDefKind::Struct { .. } => {
-                    // §3.6: for union/struct defaults we would need the original
-                    // AST. Reject as "no default computable".
+                crate::scope::TypeDefKind::Struct { fields } => {
+                    // §3.2 v0.10: each field carries a tracked default value.
+                    // Build the struct by pulling the stored defaults in
+                    // declaration order and stamp the named type.
+                    let mut result = indexmap::IndexMap::with_capacity(fields.len());
+                    for (k, info) in fields {
+                        result.insert(k.clone(), info.default_value.clone());
+                    }
+                    return Ok(Value::Struct(
+                        UzonStruct::with_type_name(result, td.name),
+                    ));
+                }
+                crate::scope::TypeDefKind::Union { .. } => {
+                    // §3.6: union defaults would require the original AST of
+                    // the declaring binding. Reject as not computable.
                     return Err(UzonError::type_error(
                         format!("cannot compute default value for named type '{}' in this context; use inline declaration with an explicit value", td.name),
                         node.span.line, node.span.col,

@@ -72,14 +72,20 @@ impl Parser {
                 if !self.at(TokenType::Comma) {
                     break;
                 }
-                // Comma lookahead: if next is a new binding, leave comma for outer construct
+                // Comma lookahead: if next is a new binding or a container closer,
+                // leave comma for outer construct (§11.4 trailing comma in struct/list/tuple).
                 let mut look = self.pos + 1;
                 while look < self.tokens.len()
                     && self.tokens[look].token_type == TokenType::Newline
                 {
                     look += 1;
                 }
-                if self.is_binding_start_at(look) {
+                if self.is_binding_start_at(look)
+                    || matches!(
+                        self.tokens[look.min(self.tokens.len() - 1)].token_type,
+                        TokenType::RBrace | TokenType::RBracket | TokenType::RParen
+                    )
+                {
                     break;
                 }
 
@@ -89,9 +95,6 @@ impl Parser {
                 // Trailing comma not permitted
                 if self.at(TokenType::Called)
                     || self.at(TokenType::Eof)
-                    || self.at(TokenType::RBrace)
-                    || self.at(TokenType::RBracket)
-                    || self.at(TokenType::RParen)
                 {
                     let tok = self.peek();
                     return Err(UzonError::syntax(
@@ -128,7 +131,12 @@ impl Parser {
             {
                 look += 1;
             }
-            if self.is_binding_start_at(look) {
+            if self.is_binding_start_at(look)
+                || matches!(
+                    self.tokens[look.min(self.tokens.len() - 1)].token_type,
+                    TokenType::RBrace | TokenType::RBracket | TokenType::RParen
+                )
+            {
                 break;
             }
 
@@ -138,9 +146,6 @@ impl Parser {
             // Trailing comma not permitted in enum variants
             if self.at(TokenType::Called)
                 || self.at(TokenType::Eof)
-                || self.at(TokenType::RBrace)
-                || self.at(TokenType::RBracket)
-                || self.at(TokenType::RParen)
             {
                 let tok = self.peek();
                 return Err(UzonError::syntax(
@@ -221,7 +226,12 @@ impl Parser {
             {
                 look += 1;
             }
-            if self.is_binding_start_at(look) {
+            if self.is_binding_start_at(look)
+                || matches!(
+                    self.tokens[look.min(self.tokens.len() - 1)].token_type,
+                    TokenType::RBrace | TokenType::RBracket | TokenType::RParen
+                )
+            {
                 break;
             }
 
@@ -231,9 +241,6 @@ impl Parser {
             // Trailing comma not permitted in tagged union variants
             if self.at(TokenType::Called)
                 || self.at(TokenType::Eof)
-                || self.at(TokenType::RBrace)
-                || self.at(TokenType::RBracket)
-                || self.at(TokenType::RParen)
             {
                 let tok = self.peek();
                 return Err(UzonError::syntax(

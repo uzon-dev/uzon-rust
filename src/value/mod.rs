@@ -71,11 +71,14 @@ impl UzonUnion {
 }
 
 /// A UZON tagged union value: a value with an explicit variant tag (§3.7).
+///
+/// Variants are stored in declaration order (§11.1) — §3.7's "first variant"
+/// default and stringification round-trip both rely on this ordering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UzonTaggedUnion {
     pub value: Box<Value>,
     pub tag: String,
-    pub variants: BTreeMap<String, Option<String>>,
+    pub variants: IndexMap<String, Option<String>>,
     pub type_name: Option<String>,
 }
 
@@ -83,7 +86,7 @@ impl UzonTaggedUnion {
     pub fn new(
         value: Value,
         tag: impl Into<String>,
-        variants: BTreeMap<String, Option<String>>,
+        variants: IndexMap<String, Option<String>>,
         type_name: Option<String>,
     ) -> Self {
         Self {

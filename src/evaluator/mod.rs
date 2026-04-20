@@ -555,7 +555,7 @@ impl Evaluator {
     pub(crate) fn create_narrowed_value_for_variant(
         &self,
         variant_name: &str,
-        variants: &BTreeMap<String, Option<String>>,
+        variants: &indexmap::IndexMap<String, Option<String>>,
         actual: &Value,
     ) -> Value {
         if let Some(Some(type_name)) = variants.get(variant_name) {

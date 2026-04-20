@@ -413,7 +413,7 @@ impl Evaluator {
         &mut self,
         variant_name: &str,
         inner: &Node,
-        variants: &std::collections::BTreeMap<String, Option<String>>,
+        variants: &IndexMap<String, Option<String>>,
         type_name: &str,
         scope: &mut Scope,
         exclude: Option<&str>,

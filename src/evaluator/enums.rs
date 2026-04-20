@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: © 2026 Suho Kang
 // SPDX-License-Identifier: MIT
 
-use std::collections::BTreeMap;
+use indexmap::IndexMap;
 
 use crate::ast::*;
 use crate::error::{Result, UzonError};
@@ -240,7 +240,7 @@ impl Evaluator {
         }
 
         let mut val = self.eval_node(value, scope, exclude)?;
-        let variant_map: BTreeMap<String, Option<String>> = variants
+        let variant_map: IndexMap<String, Option<String>> = variants
             .iter()
             .map(|(name, te)| {
                 let type_name = Some(Self::format_type_expr(te));

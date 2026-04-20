@@ -150,15 +150,20 @@ impl Evaluator {
             _ => return annotations,
         };
         for binding in bindings {
-            let ann = match &binding.value.kind {
-                NodeKind::TypeAnnotation { type_expr, .. } => {
-                    type_expr.path.last().cloned()
-                }
-                _ => None,
-            };
-            annotations.insert(binding.name.clone(), ann);
+            annotations.insert(binding.name.clone(), Self::extract_annotation_from_node(&binding.value));
         }
         annotations
+    }
+
+    /// Walk an expression looking for the outermost `as TypeName` annotation.
+    /// Handles wrapper forms (`x as T named tag`, `x named tag as T`) that carry
+    /// the declared field type on an inner TypeAnnotation node.
+    fn extract_annotation_from_node(node: &Node) -> Option<String> {
+        match &node.kind {
+            NodeKind::TypeAnnotation { type_expr, .. } => type_expr.path.last().cloned(),
+            NodeKind::NamedVariant { value, .. } => Self::extract_annotation_from_node(value),
+            _ => None,
+        }
     }
 
     pub(crate) fn set_type_name(&self, value: Value, type_name: &str) -> Value {

@@ -36,7 +36,10 @@ pub enum TypeDefKind {
         types: Vec<String>,
     },
     TaggedUnion {
-        variants: BTreeMap<String, Option<String>>,
+        /// §3.7 + §11.1: variants are stored in declaration order — the
+        /// default-value rule ("first variant's inner default") and
+        /// round-trip stringification both depend on this ordering.
+        variants: IndexMap<String, Option<String>>,
     },
     Struct {
         /// §11.1: fields are stored in declaration order.
