@@ -410,6 +410,35 @@ fn test_is_type_union() {
 }
 
 #[test]
+fn test_standalone_union_default_int_first() {
+    // §3.6 default table: first member is i32 → inner default 0, wrapped
+    // in the named union type so `is type` still works.
+    let v = eval_val("Flexible is union i32, string\nx is Flexible", "x");
+    if let Value::Union(u) = v {
+        assert_eq!(u.type_name, Some("Flexible".into()));
+        if let Value::Integer(n) = *u.value {
+            assert_eq!(n.value, 0);
+        } else {
+            panic!("expected inner integer 0, got {:?}", u.value);
+        }
+    } else {
+        panic!("expected union-wrapped default, got {v:?}");
+    }
+}
+
+#[test]
+fn test_standalone_union_default_string_first() {
+    // §3.6 default table: first member is string → inner default "".
+    let v = eval_val("S is union string, i32\nx is S", "x");
+    if let Value::Union(u) = v {
+        assert_eq!(u.type_name, Some("S".into()));
+        assert_eq!(*u.value, Value::String(String::new()));
+    } else {
+        panic!("expected union-wrapped default, got {v:?}");
+    }
+}
+
+#[test]
 fn test_is_type_null() {
     assert_eq!(
         eval_val("x is null\nresult is x is type null", "result"),
