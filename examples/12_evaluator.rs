@@ -68,12 +68,12 @@ fn main() {
         println!("  {k} = {v}");
     }
 
-    // ── 4. Struct extends and with ───────────────────────────────────
+    // ── 4. Struct plus and with ──────────────────────────────────────
     //
-    // `extends`: add/override fields (creates new struct)
-    // `with`: copy struct and replace specific fields
+    // `plus`: add/override fields (must add at least one new field)
+    // `with`: copy struct and replace specific fields (no new fields)
 
-    println!("\n=== Struct extends / with ===");
+    println!("\n=== Struct plus / with ===");
 
     let source = r#"
         base is {
@@ -81,7 +81,7 @@ fn main() {
             port is 8080,
             debug is false
         }
-        production is base extends {
+        production is base plus {
             host is "prod.example.com",
             port is 443,
             tls is true
@@ -96,7 +96,7 @@ fn main() {
         println!("    {k} = {v}");
     }
 
-    println!("  production (extends base):");
+    println!("  production (base plus ...):");
     for (k, v) in bindings["production"].as_struct().unwrap() {
         println!("    {k} = {v}");
     }
@@ -155,8 +155,8 @@ fn main() {
         items is [3, 1, 4, 1, 5, 9, 2, 6]
         count is std.len(items)
         sorted is std.sort(items, function a as i64, b as i64 returns bool { a < b })
-        has_5 is std.has(items, 5)
-        has_7 is std.has(items, 7)
+        has_5 is 5 in items
+        has_7 is 7 in items
 
         text is "  Hello, World!  "
         trimmed is std.trim(text)
