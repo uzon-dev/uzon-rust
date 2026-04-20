@@ -361,6 +361,41 @@ fn test_null_to_string() {
     assert_eq!(eval_val("x is null to string", "x"), Value::String("null".into()));
 }
 
+// === §6 Type system — null-as, recursion ===
+
+#[test]
+fn test_null_as_non_nullable_rejected() {
+    // §6.1: `null as i32` is a type error — i32 has no null membership.
+    eval_err("x is null as i32");
+}
+
+#[test]
+fn test_null_as_string_rejected() {
+    eval_err("x is null as string");
+}
+
+#[test]
+fn test_null_as_union_with_null_member() {
+    // §6.1: `null as U` where U's member set includes null is valid.
+    // Result may be either Value::Null directly (transparency) or wrapped
+    // in the named union — accept both.
+    let v = eval_val("U is union i32, null\nx is null as U", "x");
+    let inner_is_null = match &v {
+        Value::Null => true,
+        Value::Union(u) => matches!(*u.value, Value::Null),
+        _ => false,
+    };
+    assert!(inner_is_null, "expected null value, got {v:?}");
+}
+
+#[test]
+fn test_direct_recursive_struct_rejected() {
+    // §6.4: a struct field cannot reference the enclosing struct type.
+    eval_err(
+        "Tree is struct { value is 0 as i32, children is [] as [Tree] }",
+    );
+}
+
 // === §5.11 Type conversion error cases ===
 
 #[test]
