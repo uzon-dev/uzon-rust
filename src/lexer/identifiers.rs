@@ -6,7 +6,7 @@ use crate::token::{
     Token, TokenType, is_keyword, is_reserved_keyword, is_token_boundary, keyword_token_type,
 };
 
-use super::Lexer;
+use super::{Lexer, is_bidi_control};
 
 impl Lexer {
     /// Lex an identifier or keyword (§2.3).
@@ -21,6 +21,13 @@ impl Lexer {
         while let Some(ch) = self.peek() {
             if ch.is_whitespace() || is_token_boundary(ch) {
                 break;
+            }
+            // §2.3: bidi/RTL marks are not allowed in identifiers (anti-spoofing).
+            if is_bidi_control(ch) {
+                return Err(UzonError::syntax(
+                    format!("bidi/RTL control character U+{:04X} is not allowed in identifiers", ch as u32),
+                    self.line, self.col,
+                ));
             }
             ident.push(ch);
             self.advance();

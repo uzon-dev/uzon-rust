@@ -47,6 +47,21 @@ impl Evaluator {
             vals.push(self.eval_node(elem, scope, exclude)?);
         }
 
+        // §3.4: untyped integer literals promote to f64 when sibling elements
+        // are floats. Promotion only applies to integers without an explicit
+        // type annotation; an explicit `i32` etc. still triggers a type error.
+        let has_float = vals.iter().any(|v| matches!(v, Value::Float(_)));
+        let has_explicit_int = vals.iter().any(|v| matches!(v, Value::Integer(i) if i.explicit));
+        if has_float && !has_explicit_int {
+            for v in vals.iter_mut() {
+                if let Value::Integer(i) = v {
+                    if !i.explicit {
+                        *v = Value::Float(crate::value::UzonFloat::new(i.value as f64));
+                    }
+                }
+            }
+        }
+
         // Homogeneity check (§3.4)
         if vals.len() > 1 {
             let rep_type = vals.iter().find(|v| !v.is_null()).map(|v| v.type_name());

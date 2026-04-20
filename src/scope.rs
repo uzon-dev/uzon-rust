@@ -253,6 +253,19 @@ impl Scope {
                         origin_file: None,
                     });
                 }
+                // §3.8: cross-file named function types — `_shared.I32Predicate`
+                // resolves by finding a function whose `called` type name matches.
+                Value::Function(f) if f.type_name.as_deref() == Some(type_name.as_str()) => {
+                    let param_types: Vec<String> = f.params.iter()
+                        .map(|p| p.type_expr.path.last().cloned().unwrap_or_default())
+                        .collect();
+                    let return_type = f.return_type.path.last().cloned().unwrap_or_default();
+                    return Some(TypeDef {
+                        name: type_name.clone(),
+                        kind: TypeDefKind::Function { param_types, return_type },
+                        origin_file: None,
+                    });
+                }
                 // §7.3 + §6.3: resolve a dotted struct type path by locating
                 // the declaring struct value within the imported module and
                 // reconstructing its nominal identity (origin_file + fields).

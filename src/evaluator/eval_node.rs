@@ -40,6 +40,33 @@ impl Evaluator {
                         node.span.line, node.span.col,
                     ));
                 }
+                // §3.5: a bare identifier matching a variant in two or more
+                // visible enum types is ambiguous — the user must qualify with
+                // `as TypeName`. Type-context resolution (`as Color`) is handled
+                // in eval_type_annotation before reaching this branch, so by
+                // the time we look up an unresolved identifier, no annotation
+                // is in play.
+                let matching_enums: Vec<String> = scope
+                    .all_types()
+                    .into_iter()
+                    .filter_map(|(_, td)| match &td.kind {
+                        crate::scope::TypeDefKind::Enum { variants }
+                            if variants.contains(name) =>
+                        {
+                            Some(td.name.clone())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if matching_enums.len() >= 2 {
+                    return Err(UzonError::type_error(
+                        format!(
+                            "ambiguous variant '{name}': matches multiple enum types ({}); annotate with 'as TypeName'",
+                            matching_enums.join(", ")
+                        ),
+                        node.span.line, node.span.col,
+                    ));
+                }
                 // §5.12: unresolved bare name evaluates to undefined
                 Ok(Value::Undefined)
             }
@@ -279,6 +306,18 @@ impl Evaluator {
                                 ));
                             }
                         }
+                        // §7.3: structs sharing a name from different files are
+                        // distinct nominal types; reject in `or else` operands.
+                        (Value::Struct(ls), Value::Struct(rs)) => {
+                            if let (Some(ln), Some(rn)) = (&ls.type_name, &rs.type_name) {
+                                if ln != rn || ls.origin_file != rs.origin_file {
+                                    return Err(UzonError::type_error(
+                                        format!("'or else' operands must be the same type, got distinct named struct types '{}' and '{}'", ln, rn),
+                                        node.span.line, node.span.col,
+                                    ));
+                                }
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -314,44 +353,170 @@ impl Evaluator {
                 else_branch.span.line, else_branch.span.col,
             ));
         }
+
+        // §5.9 R8 Issue 5: compute branch narrowing for conditions of the form
+        // `<ident> is [not] type T` or `<ident> is [not] named V`. The then
+        // branch gets the value consistent with the condition being true; the
+        // else branch gets the value consistent with the condition being false.
+        let narrowing = self.compute_if_branch_narrowing(condition, scope, exclude);
+
         let cond = self.eval_node(condition, scope, exclude)?;
         let cond = Self::unwrap_union_owned(cond);
-        match cond {
-            Value::Bool(true) => {
-                let then_val = self.eval_node(then_branch, scope, exclude)?;
-                // §5.9/§D.5: speculative type check of else branch
-                let else_result = if let Value::Enum(ref e) = then_val {
-                    self.resolve_enum_context(else_branch, e, scope, exclude)
-                } else {
-                    self.eval_node(else_branch, scope, exclude)
-                };
-                match else_result {
-                    Ok(else_val) => Self::check_branch_types(&then_val, &else_val, node)?,
-                    Err(e) if e.is_runtime() => {} // §D.5: suppress RuntimeError
-                    Err(e) => return Err(e),        // §D.5: propagate TypeError
-                }
-                Ok(then_val)
-            }
-            Value::Bool(false) => {
-                let else_val = self.eval_node(else_branch, scope, exclude)?;
-                // §5.9/§D.5: speculative type check of then branch
-                let then_result = if let Value::Enum(ref e) = else_val {
-                    self.resolve_enum_context(then_branch, e, scope, exclude)
-                } else {
-                    self.eval_node(then_branch, scope, exclude)
-                };
-                match then_result {
-                    Ok(then_val) => Self::check_branch_types(&then_val, &else_val, node)?,
-                    Err(e) if e.is_runtime() => {} // §D.5: suppress RuntimeError
-                    Err(e) => return Err(e),        // §D.5: propagate TypeError
-                }
-                Ok(else_val)
-            }
-            _ => Err(UzonError::type_error(
+        let cond_bool = match cond {
+            Value::Bool(b) => b,
+            _ => return Err(UzonError::type_error(
                 format!("if condition must be bool, got {}", cond.type_name()),
                 node.span.line, node.span.col,
             )),
+        };
+
+        let then_narrow = narrowing.as_ref().map(|(n, t, _)| (n.as_str(), t.clone()));
+        let else_narrow = narrowing.as_ref().map(|(n, _, e)| (n.as_str(), e.clone()));
+
+        if cond_bool {
+            let then_val = self.eval_branch_narrowed(then_branch, scope, exclude, then_narrow, None)?;
+            // §5.9/§D.5: speculative type check of else branch
+            let else_result = self.eval_branch_narrowed(else_branch, scope, exclude, else_narrow, Some(&then_val));
+            match else_result {
+                Ok(else_val) => Self::check_branch_types(&then_val, &else_val, node)?,
+                Err(e) if e.is_runtime() => {} // §D.5: suppress RuntimeError
+                Err(e) => return Err(e),        // §D.5: propagate TypeError
+            }
+            Ok(then_val)
+        } else {
+            let else_val = self.eval_branch_narrowed(else_branch, scope, exclude, else_narrow, None)?;
+            // §5.9/§D.5: speculative type check of then branch
+            let then_result = self.eval_branch_narrowed(then_branch, scope, exclude, then_narrow, Some(&else_val));
+            match then_result {
+                Ok(then_val) => Self::check_branch_types(&then_val, &else_val, node)?,
+                Err(e) if e.is_runtime() => {} // §D.5: suppress RuntimeError
+                Err(e) => return Err(e),        // §D.5: propagate TypeError
+            }
+            Ok(else_val)
         }
+    }
+
+    /// Evaluate an if-branch, optionally narrowing a scrutinee binding and/or
+    /// anchoring enum resolution to a sibling branch's value.
+    fn eval_branch_narrowed(
+        &mut self,
+        branch: &Node,
+        scope: &mut Scope,
+        exclude: Option<&str>,
+        narrow: Option<(&str, Value)>,
+        enum_anchor: Option<&Value>,
+    ) -> Result<Value> {
+        let mut narrowed_owned: Scope;
+        let use_scope: &mut Scope = if let Some((name, val)) = narrow {
+            narrowed_owned = Scope::with_parent(scope.clone());
+            narrowed_owned.define(name, val);
+            &mut narrowed_owned
+        } else {
+            scope
+        };
+        if let Some(Value::Enum(e)) = enum_anchor {
+            self.resolve_enum_context(branch, e, use_scope, exclude)
+        } else {
+            self.eval_node(branch, use_scope, exclude)
+        }
+    }
+
+    /// §5.9 R8 Issue 5: detect `<ident> is [not] type T` / `<ident> is [not]
+    /// named V` conditions and return per-branch narrowed values for the
+    /// scrutinee. Returns `None` for non-narrowable conditions.
+    fn compute_if_branch_narrowing(
+        &self,
+        condition: &Node,
+        scope: &Scope,
+        exclude: Option<&str>,
+    ) -> Option<(String, Value, Value)> {
+        let (op, left, right) = match &condition.kind {
+            NodeKind::BinaryOp { op, left, right } => (*op, left, right),
+            _ => return None,
+        };
+        if !matches!(op, BinaryOp::IsType | BinaryOp::IsNotType | BinaryOp::IsNamed | BinaryOp::IsNotNamed) {
+            return None;
+        }
+        let scrut_name = match &left.kind {
+            NodeKind::Identifier { name } => name.clone(),
+            _ => return None,
+        };
+        let target = match &right.kind {
+            NodeKind::Identifier { name } => name.clone(),
+            _ => return None,
+        };
+        let scrut_val = scope.get(&scrut_name, exclude)?.clone();
+        let inner = Self::unwrap_union_owned(scrut_val.clone());
+
+        let (positive, negative) = match op {
+            BinaryOp::IsType | BinaryOp::IsNotType => {
+                let actual = Self::compound_type_name(&inner);
+                let positive = if actual == target {
+                    inner.clone()
+                } else {
+                    self.create_narrowed_value_for_type(&target, &inner)
+                };
+                let negative = if let Value::Union(u) = &scrut_val {
+                    let remaining: Vec<&String> = u.types.iter()
+                        .filter(|t| t.as_str() != target.as_str())
+                        .collect();
+                    if remaining.len() == 1 {
+                        if actual != target {
+                            inner.clone()
+                        } else {
+                            self.create_narrowed_value_for_type(remaining[0], &inner)
+                        }
+                    } else {
+                        // Multiple remaining members — keep the union wrapper so
+                        // nested type checks still see the full type information.
+                        scrut_val.clone()
+                    }
+                } else {
+                    // Non-union scrutinee: no structural narrowing available.
+                    inner.clone()
+                };
+                (positive, negative)
+            }
+            BinaryOp::IsNamed | BinaryOp::IsNotNamed => {
+                let tu = match &scrut_val {
+                    Value::TaggedUnion(tu) => tu,
+                    _ => return None,
+                };
+                if !tu.variants.contains_key(&target) {
+                    return None;
+                }
+                let is_match = tu.tag == target;
+                let positive = if is_match {
+                    inner.clone()
+                } else {
+                    self.create_narrowed_value_for_variant(&target, &tu.variants, &inner)
+                };
+                let remaining: Vec<&String> = tu.variants.keys()
+                    .filter(|v| v.as_str() != target.as_str())
+                    .collect();
+                let negative = if remaining.len() == 1 {
+                    if !is_match {
+                        inner.clone()
+                    } else {
+                        self.create_narrowed_value_for_variant(remaining[0], &tu.variants, &inner)
+                    }
+                } else {
+                    // Multiple remaining variants — preserve the tagged-union
+                    // wrapper so nested `is named` checks still resolve.
+                    scrut_val.clone()
+                };
+                (positive, negative)
+            }
+            _ => unreachable!(),
+        };
+
+        let is_not = matches!(op, BinaryOp::IsNotType | BinaryOp::IsNotNamed);
+        let (then_val, else_val) = if is_not {
+            (negative, positive)
+        } else {
+            (positive, negative)
+        };
+        Some((scrut_name, then_val, else_val))
     }
 
     // === Literal evaluation ===
@@ -533,13 +698,29 @@ impl Evaluator {
                         UzonStruct::with_type_name(result, td.name),
                     ));
                 }
-                crate::scope::TypeDefKind::Union { .. } => {
-                    // §3.6: union defaults would require the original AST of
-                    // the declaring binding. Reject as not computable.
-                    return Err(UzonError::type_error(
-                        format!("cannot compute default value for named type '{}' in this context; use inline declaration with an explicit value", td.name),
-                        node.span.line, node.span.col,
-                    ));
+                crate::scope::TypeDefKind::Union { types } => {
+                    // §3.6: named union default = first member type's default,
+                    // recursively per the default table. Nested named unions
+                    // preserve their wrapper so each level keeps its nominal
+                    // identity; primitive leaves are the plain default value.
+                    let first = types.first().ok_or_else(|| {
+                        UzonError::type_error(
+                            format!("named union '{}' has no members", td.name),
+                            node.span.line, node.span.col,
+                        )
+                    })?;
+                    let synthetic = TypeExpr {
+                        path: vec![first.clone()],
+                        is_list: false,
+                        inner: None,
+                        is_null: false,
+                        tuple_types: None,
+                        span: type_expr.span,
+                    };
+                    let inner_val = self.eval_default_for_type(&synthetic, scope, node)?;
+                    return Ok(Value::Union(UzonUnion::new(
+                        inner_val, types, Some(td.name),
+                    )));
                 }
                 crate::scope::TypeDefKind::List { ref element_type } => {
                     // §3.4.1: named list type default is an empty list carrying

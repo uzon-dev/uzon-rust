@@ -11,8 +11,20 @@
 /// A mode stack tracks nesting so that `"outer {inner} rest"` properly transitions
 /// between string and expression contexts. Brace depth tracking allows nested
 /// struct literals inside interpolation.
-use crate::error::Result;
+use crate::error::{Result, UzonError};
 use crate::token::{Token, TokenType, is_value_token};
+
+/// §2.3: Bidi/RTL control characters — forbidden outside string literals to
+/// prevent spoofing.  Covers directional marks (U+200E/U+200F), explicit
+/// embedding/override (U+202A–U+202E), and isolate controls (U+2066–U+2069).
+pub(crate) fn is_bidi_control(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{200E}' | '\u{200F}'
+        | '\u{202A}' | '\u{202B}' | '\u{202C}' | '\u{202D}' | '\u{202E}'
+        | '\u{2066}' | '\u{2067}' | '\u{2068}' | '\u{2069}'
+    )
+}
 
 mod numbers;
 mod identifiers;
@@ -122,6 +134,14 @@ impl Lexer {
             Some(c) => c,
             None => return Ok(()),
         };
+
+        // §2.3: reject bidi/RTL controls outside string literals.
+        if is_bidi_control(ch) {
+            return Err(UzonError::syntax(
+                format!("bidi/RTL control character U+{:04X} is not allowed outside strings", ch as u32),
+                self.line, self.col,
+            ));
+        }
 
         // Whitespace (not newline)
         if ch == ' ' || ch == '\t' || ch == '\r' {

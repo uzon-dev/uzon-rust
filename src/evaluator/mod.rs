@@ -163,6 +163,19 @@ impl Evaluator {
                     ));
                 }
             }
+            // §7.3: nominal identity = (type_name, origin_file). Two structs
+            // sharing a name but declared in different files are distinct
+            // named types; using them on opposite branches is a type error.
+            (Value::Struct(sa), Value::Struct(sb)) => {
+                if let (Some(ta), Some(tb)) = (&sa.type_name, &sb.type_name) {
+                    if ta != tb || sa.origin_file != sb.origin_file {
+                        return Err(UzonError::type_error(
+                            format!("branches must return the same type, got distinct named struct types '{}' and '{}'", ta, tb),
+                            node.span.line, node.span.col,
+                        ));
+                    }
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -663,6 +676,17 @@ pub(crate) fn check_structural_compatibility(a: &Value, b: &Value, node: &Node) 
             }
         }
         (Value::Struct(sa), Value::Struct(sb)) => {
+            // §7.3: nominal identity = (type_name, origin_file). Two structs
+            // sharing a name but declared in different files are distinct
+            // named types; comparing them is a type error (§5.2).
+            if let (Some(ta), Some(tb)) = (&sa.type_name, &sb.type_name) {
+                if ta != tb || sa.origin_file != sb.origin_file {
+                    return Err(UzonError::type_error(
+                        format!("cannot compare values of distinct named struct types '{}' and '{}'", ta, tb),
+                        node.span.line, node.span.col,
+                    ));
+                }
+            }
             let keys_a: HashSet<&String> = sa.keys().collect();
             let keys_b: HashSet<&String> = sb.keys().collect();
             if keys_a != keys_b {

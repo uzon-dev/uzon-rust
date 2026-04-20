@@ -173,6 +173,17 @@ impl Evaluator {
             return Ok(Value::Undefined);
         }
 
+        // §6.1: `null as T` is only valid when T is `null`, a union/tagged-union
+        // including null, or a struct with a null member (handled by their own
+        // paths above). Tuple types are never null-compatible.
+        if val.is_null() && type_expr.tuple_types.is_some() {
+            return Err(UzonError::type_error(
+                "cannot cast null to tuple type; 'null as T' requires T to be \
+                 'null', a union including null, or a tagged-union null variant",
+                node.span.line, node.span.col,
+            ));
+        }
+
         // §6.3: named struct type conformance checking
         if let Some(typedef) = scope.resolve_type_path(&type_expr.path) {
             if let TypeDefKind::Struct { .. } = typedef.kind {
@@ -942,6 +953,30 @@ impl Evaluator {
             }
         }
 
+        // §3.6: tuple value matches a tuple member type structurally. Parse
+        // the member signature and adopt element types recursively so that
+        // `(42, "hello") as union (i32, string), null` coerces the untyped
+        // integer to i32.
+        if let Value::Tuple(tup) = &val {
+            for tn in types {
+                if let Some(elem_types) = Self::parse_tuple_type_signature(tn) {
+                    if elem_types.len() == tup.elements.len() {
+                        let mut new_elements = Vec::with_capacity(tup.elements.len());
+                        let mut ok = true;
+                        for (i, et) in elem_types.iter().enumerate() {
+                            match Self::try_adopt_value_to_type(tup.elements[i].clone(), et) {
+                                Some(v) => new_elements.push(v),
+                                None => { ok = false; break; }
+                            }
+                        }
+                        if ok {
+                            return Ok(Value::Tuple(UzonTuple { elements: new_elements }));
+                        }
+                    }
+                }
+            }
+        }
+
         // Typed value (explicit numerics, strings, bools, other): the value's
         // specific type name must appear in the union member list.
         let actual = Self::specific_type_name(&val);
@@ -957,6 +992,88 @@ impl Evaluator {
             ),
             node.span.line, node.span.col,
         ))
+    }
+
+    /// Parse a formatted tuple type signature like `"(i32, string)"` into
+    /// its component type strings. Respects nested parens/brackets so that
+    /// `"((i32, string), f64)"` yields `["(i32, string)", "f64"]`. Returns
+    /// `None` for non-tuple strings.
+    pub(crate) fn parse_tuple_type_signature(s: &str) -> Option<Vec<String>> {
+        let s = s.trim();
+        if !(s.starts_with('(') && s.ends_with(')')) {
+            return None;
+        }
+        let inner = &s[1..s.len() - 1];
+        let mut parts = Vec::new();
+        let mut depth: i32 = 0;
+        let mut start = 0usize;
+        for (i, c) in inner.char_indices() {
+            match c {
+                '(' | '[' => depth += 1,
+                ')' | ']' => depth -= 1,
+                ',' if depth == 0 => {
+                    parts.push(inner[start..i].trim().to_string());
+                    start = i + c.len_utf8();
+                }
+                _ => {}
+            }
+        }
+        parts.push(inner[start..].trim().to_string());
+        Some(parts)
+    }
+
+    /// Adopt a value to a structural type name (as produced by
+    /// `format_type_expr`). Handles integers/floats (untyped literal
+    /// adoption), nested tuples, and exact-match for typed values. Returns
+    /// `None` if the value cannot be adopted.
+    fn try_adopt_value_to_type(val: Value, type_name: &str) -> Option<Value> {
+        if let Value::Integer(mut n) = val {
+            if !n.explicit {
+                if let Some(it) = IntegerType::from_type_name(type_name) {
+                    n.type_ann = it;
+                    n.explicit = true;
+                    return Some(Value::Integer(n));
+                }
+                if let Some(ft) = FloatType::from_type_name(type_name) {
+                    return Some(Value::Float(UzonFloat::with_type(n.value as f64, ft)));
+                }
+            }
+            let actual = n.type_ann.display_name();
+            if actual == type_name {
+                return Some(Value::Integer(n));
+            }
+            return None;
+        }
+        if let Value::Float(mut f) = val {
+            if !f.explicit {
+                if let Some(ft) = FloatType::from_type_name(type_name) {
+                    f.type_ann = ft;
+                    f.explicit = true;
+                    return Some(Value::Float(f));
+                }
+            }
+            let actual = f.type_ann.display_name().to_string();
+            if actual == type_name {
+                return Some(Value::Float(f));
+            }
+            return None;
+        }
+        if let Value::Tuple(tup) = val {
+            let elem_types = Self::parse_tuple_type_signature(type_name)?;
+            if elem_types.len() != tup.elements.len() {
+                return None;
+            }
+            let mut new_elements = Vec::with_capacity(tup.elements.len());
+            for (i, et) in elem_types.iter().enumerate() {
+                new_elements.push(Self::try_adopt_value_to_type(tup.elements[i].clone(), et)?);
+            }
+            return Some(Value::Tuple(UzonTuple { elements: new_elements }));
+        }
+        let actual = Self::specific_type_name(&val);
+        if actual == type_name {
+            return Some(val);
+        }
+        None
     }
 
     pub(crate) fn check_type_assertion(&self, val: &Value, type_name: &str, node: &Node) -> Result<()> {
