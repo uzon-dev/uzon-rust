@@ -92,6 +92,10 @@ impl Evaluator {
         // §3.5 rule 4: enum type-context inference via `as [EnumType]`
         // Must run BEFORE eval_node so bare identifiers in enum lists are resolved from AST.
         if type_expr.is_list {
+            // §6.1/§6.4: validate the declared list type (including element type)
+            // before touching the value, so `[] as [Tree]` inside Tree's own body
+            // fails (Tree not yet in scope) and `[...] as [NotAType]` is rejected.
+            self.validate_type_exists(type_expr, scope, node)?;
             // eval_type_annotation_list may re-evaluate from AST for enum resolution,
             // but still needs an evaluated fallback for non-enum lists.
             let prev_in_ta = self.in_type_annotation;
@@ -129,9 +133,7 @@ impl Evaluator {
 
         if val.is_undefined() {
             // §6.1: undefined propagates through `as`, but the type name MUST still be validated.
-            if let Some(type_name) = type_expr.path.last() {
-                self.validate_type_exists(type_name, type_expr, scope, node)?;
-            }
+            self.validate_type_exists(type_expr, scope, node)?;
             return Ok(Value::Undefined);
         }
 
@@ -157,9 +159,7 @@ impl Evaluator {
         }
 
         // §6.1: Validate type name exists before proceeding
-        if let Some(type_name) = type_expr.path.last() {
-            self.validate_type_exists(type_name, type_expr, scope, node)?;
-        }
+        self.validate_type_exists(type_expr, scope, node)?;
 
         // Basic range checking for numeric types
         if let Some(type_name) = type_expr.path.last() {
@@ -241,9 +241,7 @@ impl Evaluator {
         // Non-enum list type annotation — evaluate the expression, then validate elements
         let mut val = self.eval_node(expr, scope, exclude)?;
         if val.is_undefined() {
-            if let Some(type_name) = type_expr.path.last() {
-                self.validate_type_exists(type_name, type_expr, scope, node)?;
-            }
+            self.validate_type_exists(type_expr, scope, node)?;
             return Ok(Value::Undefined);
         }
         if let Value::List(list) = &mut val {

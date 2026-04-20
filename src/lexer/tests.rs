@@ -213,6 +213,24 @@ fn test_leading_underscore_after_prefix_rejected() {
 }
 
 #[test]
+fn test_consecutive_underscores_rejected() {
+    // §9 EBNF: dec_int = DIGIT , { ( "_" , DIGIT ) | DIGIT } — each `_` must
+    // be followed by a digit, so consecutive underscores are invalid.
+    assert!(Lexer::new("1__000").tokenize().is_err());
+    assert!(Lexer::new("0xFF__FF").tokenize().is_err());
+    assert!(Lexer::new("0b1__010").tokenize().is_err());
+    assert!(Lexer::new("0o7__7").tokenize().is_err());
+    assert!(Lexer::new("3.1__4").tokenize().is_err());
+    assert!(Lexer::new("1e1__0").tokenize().is_err());
+}
+
+#[test]
+fn test_trailing_underscore_in_fractional_rejected() {
+    assert!(Lexer::new("3.14_").tokenize().is_err());
+    assert!(Lexer::new("1e10_").tokenize().is_err());
+}
+
+#[test]
 fn test_comment_lines_tracked() {
     let (_, comment_lines) = Lexer::new("x is 1 // comment\ny is 2").tokenize().unwrap();
     assert_eq!(comment_lines, vec![1]);

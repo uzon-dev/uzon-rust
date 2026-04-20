@@ -126,13 +126,9 @@ impl Evaluator {
                 }
                 // §6.2: Validate parameter and return type names at definition time
                 for param in params {
-                    if let Some(type_name) = param.type_expr.path.last() {
-                        self.validate_type_exists(type_name, &param.type_expr, scope, node)?;
-                    }
+                    self.validate_type_exists(&param.type_expr, scope, node)?;
                 }
-                if let Some(type_name) = return_type.path.last() {
-                    self.validate_type_exists(type_name, return_type, scope, node)?;
-                }
+                self.validate_type_exists(return_type, scope, node)?;
 
                 // §3.8: Eagerly evaluate defaults in the enclosing scope to catch
                 // type mismatches and `undefined` defaults at definition time.

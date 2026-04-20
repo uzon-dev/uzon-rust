@@ -91,7 +91,7 @@ impl Lexer {
             return Ok(false);
         }
 
-        let (end_pos, has_digits, last_was_underscore) = self.consume_digits(i, base);
+        let (end_pos, has_digits, last_was_underscore) = self.consume_digits(i, base)?;
         i = end_pos;
 
         if !has_digits {
@@ -149,7 +149,10 @@ impl Lexer {
     }
 
     /// Consume digits for the given base, handling underscore separators.
-    fn consume_digits(&self, start: usize, base: u32) -> (usize, bool, bool) {
+    ///
+    /// Per §9 EBNF `dec_int = DIGIT , { ( "_" , DIGIT ) | DIGIT }`, each `_`
+    /// must be followed by a digit: consecutive underscores are rejected here.
+    fn consume_digits(&self, start: usize, base: u32) -> Result<(usize, bool, bool)> {
         let mut i = start;
         let mut has_digits = false;
         let mut last_was_underscore = false;
@@ -157,6 +160,13 @@ impl Lexer {
         while i < self.source.len() {
             let c = self.source[i];
             if c == '_' {
+                if last_was_underscore {
+                    return Err(UzonError::syntax(
+                        "consecutive underscores in numeric literal",
+                        self.line,
+                        self.col,
+                    ));
+                }
                 last_was_underscore = true;
                 i += 1;
                 continue;
@@ -175,7 +185,7 @@ impl Lexer {
             i += 1;
         }
 
-        (i, has_digits, last_was_underscore)
+        Ok((i, has_digits, last_was_underscore))
     }
 
     /// Try to consume float suffix (decimal point and/or exponent) (§4.3).
@@ -198,12 +208,15 @@ impl Lexer {
             let after_dot = i + 1;
             if after_dot < self.source.len() && self.source[after_dot].is_ascii_digit() {
                 is_float = true;
-                i = after_dot;
-                while i < self.source.len()
-                    && (self.source[i].is_ascii_digit() || self.source[i] == '_')
-                {
-                    i += 1;
+                let (end, _, last_was_underscore) = self.consume_digits(after_dot, 10)?;
+                if last_was_underscore {
+                    return Err(UzonError::syntax(
+                        "trailing underscore in numeric literal",
+                        start_line,
+                        start_col,
+                    ));
                 }
+                i = end;
             }
         }
 
@@ -214,19 +227,22 @@ impl Lexer {
             if i < self.source.len() && matches!(self.source[i], '+' | '-') {
                 i += 1;
             }
-            let exp_start = i;
-            while i < self.source.len()
-                && (self.source[i].is_ascii_digit() || self.source[i] == '_')
-            {
-                i += 1;
-            }
-            if i == exp_start {
+            let (end, has_digits, last_was_underscore) = self.consume_digits(i, 10)?;
+            if !has_digits {
                 return Err(UzonError::syntax(
                     "expected digits after exponent",
                     start_line,
                     start_col,
                 ));
             }
+            if last_was_underscore {
+                return Err(UzonError::syntax(
+                    "trailing underscore in numeric literal",
+                    start_line,
+                    start_col,
+                ));
+            }
+            i = end;
         }
 
         Ok((i, is_float))

@@ -300,6 +300,10 @@ impl Evaluator {
                 node.span.line, node.span.col,
             )),
         };
+        // §3.2.1 rule 5: `with` preserves the nominal type_name, but the
+        // resulting value is a copy — not a type declaration. Clear the
+        // declaration flag so stringify won't emit a duplicate `called`.
+        base_map.declares_type = false;
 
         let override_fields = match &overrides.kind {
             NodeKind::StructLiteral { fields } => fields,

@@ -186,6 +186,7 @@ impl Evaluator {
             }
             Value::Struct(mut s) => {
                 s.type_name = Some(type_name.to_string());
+                s.declares_type = true;
                 Value::Struct(s)
             }
             Value::List(mut l) => {
@@ -196,8 +197,30 @@ impl Evaluator {
         }
     }
 
-    /// §6.1: Validate that a type name exists (built-in or user-defined via `called`).
-    pub(crate) fn validate_type_exists(&self, type_name: &str, type_expr: &TypeExpr, scope: &Scope, node: &Node) -> Result<()> {
+    /// §6.1: Validate that a type expression refers to known types. Recurses
+    /// into list element types and tuple component types so that
+    /// `[NotAType]` and `(i32, NotAType)` are rejected, and so that a
+    /// self-referential struct field such as `children is [] as [Tree]`
+    /// fails §6.4 (Tree is not yet in scope while evaluating its own body).
+    pub(crate) fn validate_type_exists(&self, type_expr: &TypeExpr, scope: &Scope, node: &Node) -> Result<()> {
+        if type_expr.is_list {
+            if let Some(inner) = &type_expr.inner {
+                return self.validate_type_exists(inner, scope, node);
+            }
+            return Ok(());
+        }
+        if let Some(tuple) = &type_expr.tuple_types {
+            for t in tuple {
+                self.validate_type_exists(t, scope, node)?;
+            }
+            return Ok(());
+        }
+        if type_expr.is_null {
+            return Ok(());
+        }
+        let Some(type_name) = type_expr.path.last() else {
+            return Ok(());
+        };
         let is_builtin = type_name == "string"
             || type_name == "bool"
             || type_name == "null"

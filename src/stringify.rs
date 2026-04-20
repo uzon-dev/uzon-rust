@@ -59,12 +59,9 @@ fn write_binding(
 
     // E.4: prefer `are` for non-empty lists when safe
     if let Value::List(list) = value {
-        if !list.is_empty() && is_are_safe(list, st) {
-            // All-null lists with element_type need bracket syntax for `as [Type]`
-            if !(list.iter().all(|v| v.is_null()) && list.element_type.is_some()) {
-                write_are_list(out, list, depth, options, st);
-                return;
-            }
+        if !list.is_empty() && is_are_safe(list, st) && list.element_type.is_none() {
+            write_are_list(out, list, depth, options, st);
+            return;
         }
     }
 
@@ -200,7 +197,7 @@ fn write_value(
         Value::String(s) => write_string(out, s),
         Value::List(list) => write_list(out, list, depth, options, st),
         Value::Tuple(t) => write_tuple(out, &t.elements, depth, options, st),
-        Value::Struct(fields) => write_struct(out, fields, depth, options, st),
+        Value::Struct(s) => write_struct(out, s, depth, options, st),
         Value::Enum(e) => write_enum(out, e, st),
         Value::Union(u) => write_union(out, u, depth, options, st),
         Value::TaggedUnion(tu) => write_tagged_union(out, tu, depth, options, st),
@@ -285,7 +282,7 @@ fn write_list(
     out.push_str("[\n");
     for (i, item) in list.iter().enumerate() {
         write_indent(out, depth + 1, options);
-        write_value(out, item, depth + 1, options, st);
+        write_list_element(out, item, depth + 1, options, st, list.element_type.as_deref());
         if i + 1 < list.len() {
             out.push(',');
         }
@@ -301,18 +298,39 @@ fn write_list(
     }
 }
 
+/// Write a list element. When the list has a matching `element_type`, suppress
+/// a struct element's own `called TypeName` suffix — the list-level
+/// `as [TypeName]` already provides the type at reparse, and repeating
+/// `called` would declare the type twice.
+fn write_list_element(
+    out: &mut String,
+    value: &Value,
+    depth: usize,
+    options: &StringifyOptions,
+    st: &mut HashSet<String>,
+    element_type: Option<&str>,
+) {
+    if let (Value::Struct(s), Some(et)) = (value, element_type) {
+        if s.type_name.as_deref() == Some(et) {
+            write_struct_body(out, &s.fields, depth, options, st);
+            return;
+        }
+    }
+    write_value(out, value, depth, options, st);
+}
+
 fn format_inline_list(
-    items: &[Value],
+    list: &UzonList,
     depth: usize,
     options: &StringifyOptions,
     st: &mut HashSet<String>,
 ) -> String {
     let mut s = String::from("[ ");
-    for (i, item) in items.iter().enumerate() {
+    for (i, item) in list.iter().enumerate() {
         if i > 0 {
             s.push_str(", ");
         }
-        write_value(&mut s, item, depth, options, st);
+        write_list_element(&mut s, item, depth, options, st, list.element_type.as_deref());
     }
     s.push_str(" ]");
     s
@@ -346,8 +364,32 @@ fn write_tuple(
 
 /// Write a struct `{ name is value, ... }`.
 /// §6.2: Types defined inside a struct are scoped to that struct.
-/// Use a cloned `st` so `called` definitions inside don't leak out.
+/// Emits `called TypeName` only for the declaration site (where `declares_type`
+/// is set by `set_type_name` at the source-level `called` clause) and only on
+/// first occurrence of the name in `st`. Inherited type_name propagated through
+/// `with` / std.* does NOT emit any suffix — the list-level `as [T]` or a
+/// subsequent `as T` annotation carries the nominal identity at reparse.
 fn write_struct(
+    out: &mut String,
+    s: &UzonStruct,
+    depth: usize,
+    options: &StringifyOptions,
+    st: &mut HashSet<String>,
+) {
+    write_struct_body(out, &s.fields, depth, options, st);
+    if let Some(ref type_name) = s.type_name {
+        if s.declares_type && !st.contains(type_name) {
+            out.push_str(" called ");
+            write_identifier(out, type_name);
+            st.insert(type_name.clone());
+        }
+    }
+}
+
+/// Write a struct's `{ fields }` body without any `called`/`as` suffix. Used
+/// when the enclosing context (e.g. a list with matching `element_type`)
+/// already provides the named type, or for anonymous structs.
+fn write_struct_body(
     out: &mut String,
     fields: &IndexMap<String, Value>,
     depth: usize,

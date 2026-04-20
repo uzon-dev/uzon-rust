@@ -180,15 +180,20 @@ pub struct UzonStruct {
     pub fields: IndexMap<String, Value>,
     /// Named type assigned via `called` or `as NamedStructType` (nominal type identity, §3.2.1 rule 5).
     pub type_name: Option<String>,
+    /// True only for the struct value at the source-level `called TypeName`
+    /// declaration site. Stringify uses this to decide whether to emit
+    /// `called TypeName` (declaration) or drop the suffix for inherited
+    /// type_name propagated through `with`, std.* functions, etc.
+    pub declares_type: bool,
 }
 
 impl UzonStruct {
     pub fn new(fields: IndexMap<String, Value>) -> Self {
-        Self { fields, type_name: None }
+        Self { fields, type_name: None, declares_type: false }
     }
 
     pub fn with_type_name(fields: IndexMap<String, Value>, type_name: impl Into<String>) -> Self {
-        Self { fields, type_name: Some(type_name.into()) }
+        Self { fields, type_name: Some(type_name.into()), declares_type: false }
     }
 }
 
