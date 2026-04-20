@@ -361,6 +361,62 @@ fn test_null_to_string() {
     assert_eq!(eval_val("x is null to string", "x"), Value::String("null".into()));
 }
 
+// === §5.11 Type conversion error cases ===
+
+#[test]
+fn test_to_struct_string_rejected() {
+    // §5.11.0: struct → string is not permitted.
+    eval_err("s is { a is 1 }\nbad is s to string");
+}
+
+#[test]
+fn test_to_list_string_rejected() {
+    eval_err("xs is [1, 2, 3]\nbad is xs to string");
+}
+
+#[test]
+fn test_to_tuple_string_rejected() {
+    eval_err("t is (1, 2)\nbad is t to string");
+}
+
+#[test]
+fn test_to_u32_negative_rejected() {
+    // §5.11: negative signed to unsigned is a runtime error (no wrap/abs).
+    eval_err("x is -1\nbad is x to u32");
+}
+
+#[test]
+fn test_to_u8_overflow_rejected() {
+    // §5.11: narrowing overflow is a runtime error.
+    eval_err("x is 256\nbad is x to u8");
+}
+
+#[test]
+fn test_string_infinity_parse_rejected() {
+    // §5.11.1: only "inf"/"-inf"/"nan" — not "infinity".
+    eval_err(r#"x is "infinity" to f64"#);
+}
+
+#[test]
+fn test_string_leading_whitespace_rejected() {
+    eval_err(r#"x is " 8080 " to u16"#);
+}
+
+#[test]
+fn test_undefined_propagates_through_to() {
+    // §5.11: undefined state propagates through 'to' for or-else chaining.
+    assert_eq!(
+        eval_val("port is env.NO_SUCH_PORT to u16 or else 8080", "port"),
+        Value::Integer(UzonInteger::with_type(8080, IntegerType::U(16)))
+    );
+}
+
+#[test]
+fn test_interpolation_undefined_is_terminal() {
+    // §5.11.2: interpolation of an undefined expression is a runtime error.
+    eval_err(r#"bad is "port={env.NO_SUCH_PORT}""#);
+}
+
 // === Case/when/else ===
 
 #[test]
