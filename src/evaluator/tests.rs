@@ -784,6 +784,65 @@ fn test_called_enum() {
     }
 }
 
+// === §3.5 Rule 4 — type-context variant inference ===
+
+#[test]
+fn test_standalone_enum_default_is_first_variant() {
+    // §3.5: `Name is enum a, b, c` binds the first variant and registers type `Name`.
+    let v = eval_val("RGB is enum red, green, blue\nx is RGB", "x");
+    if let Value::Enum(e) = v {
+        assert_eq!(e.value, "red");
+        assert_eq!(e.type_name, Some("RGB".into()));
+    } else {
+        panic!("expected enum value, got {v:?}");
+    }
+}
+
+#[test]
+fn test_enum_variant_inference_in_struct_field() {
+    // §3.5 rule 4: named struct field with enum type permits bare variant names.
+    let src = r#"
+        Color is enum red, green, blue
+        Config is struct {
+            bg is red as Color
+            fg is green as Color
+        }
+        active is {
+            bg is blue
+            fg is red
+        } as Config
+    "#;
+    let bindings = eval(src).unwrap();
+    let cfg = bindings.get("active").unwrap().as_struct().unwrap();
+    if let Value::Enum(e) = cfg.get("bg").unwrap() {
+        assert_eq!(e.value, "blue");
+        assert_eq!(e.type_name, Some("Color".into()));
+    } else {
+        panic!("bg not an enum");
+    }
+    if let Value::Enum(e) = cfg.get("fg").unwrap() {
+        assert_eq!(e.value, "red");
+    } else {
+        panic!("fg not an enum");
+    }
+}
+
+#[test]
+fn test_enum_rule4_binding_wins_over_variant() {
+    // §3.5 gotcha: in rule-4 positions, a bare identifier that matches both a
+    // binding and a variant resolves to the binding — producing a type error
+    // when the field's enum type does not accept the binding's value.
+    let src = r#"
+        Color is enum red, green, blue
+        red is 1
+        Cfg is struct {
+            bg is green as Color
+        }
+        bad is { bg is red } as Cfg
+    "#;
+    eval_err(src);
+}
+
 // === In operator ===
 
 #[test]
