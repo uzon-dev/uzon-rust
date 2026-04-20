@@ -864,6 +864,41 @@ fn test_called_enum() {
     }
 }
 
+// === §4 Literal edge cases ===
+
+#[test]
+fn test_empty_string_interpolation_rejected() {
+    // §4.4.1: `{}` inside a string with no expression is a syntax error.
+    eval_err(r#"x is "hello {}""#);
+}
+
+#[test]
+fn test_invalid_brace_escape_rejected() {
+    // §4.4.1: `\}` is not a recognized escape sequence (bare `}` is fine).
+    eval_err(r#"x is "bad \}""#);
+}
+
+#[test]
+fn test_literal_undefined_as_binding_rhs_rejected() {
+    // §4.5: `undefined` as binding RHS is a type error.
+    eval_err("x is undefined");
+}
+
+#[test]
+fn test_literal_undefined_in_else_branch_rejected() {
+    // §4.5: literal `undefined` in any `if`/`case` branch is a type error.
+    eval_err("x is if true then 1 else undefined");
+}
+
+#[test]
+fn test_undefined_comparison_permitted() {
+    // §4.5: `undefined` may appear as operand of `is`/`is not`.
+    assert_eq!(
+        eval_val("x is env.NO_SUCH_VAR is undefined\nresult is x", "result"),
+        Value::Bool(true)
+    );
+}
+
 // === §3.5 Rule 4 — type-context variant inference ===
 
 #[test]
