@@ -44,7 +44,8 @@ impl Evaluator {
                 Ok(Value::Undefined)
             }
             NodeKind::EnvRef => {
-                Err(UzonError::runtime("standalone 'env' is not valid; use env.NAME", node.span.line, node.span.col))
+                // §5.13: standalone `env` without member access is a type error.
+                Err(UzonError::type_error("standalone 'env' is not valid; use env.NAME", node.span.line, node.span.col))
             }
 
             NodeKind::MemberAccess { object, member } => {
