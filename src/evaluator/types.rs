@@ -722,7 +722,15 @@ impl Evaluator {
                 for (key, field_info) in fields {
                     let val_field = &val_fields[key];
                     if !val_field.is_null() {
-                        if val_field.type_name() != field_info.type_category {
+                        // §3.2.1 deferred-null: a field declared as untyped
+                        // `null` is a type-deferred placeholder — each
+                        // construction site independently chooses the
+                        // underlying type, so skip the category check.
+                        let is_deferred_null = field_info.type_category == "null"
+                            && field_info.type_annotation.is_none();
+                        if !is_deferred_null
+                            && val_field.type_name() != field_info.type_category
+                        {
                             return Err(UzonError::type_error(
                                 format!(
                                     "field '{key}' type mismatch: expected {}, got {}",
