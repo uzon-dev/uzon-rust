@@ -323,9 +323,26 @@ impl Evaluator {
                 }
                 self.collect_deps(else_branch, names, name_to_idx, _exclude, _scope, deps);
             }
-            NodeKind::TypeAnnotation { expr, .. }
-            | NodeKind::Conversion { expr, .. }
-            | NodeKind::FromEnum { value: expr, .. }
+            NodeKind::TypeAnnotation { expr, type_expr }
+            | NodeKind::Conversion { expr, type_expr } => {
+                self.collect_deps(expr, names, name_to_idx, _exclude, _scope, deps);
+                // §7.3: dotted type paths (e.g., `as module_b.Point`) depend
+                // on the outer binding `module_b`, so the module binding must
+                // evaluate before this annotation can resolve.
+                if let Some(first) = type_expr.path.first() {
+                    if let Some(&idx) = name_to_idx.get(first.as_str()) {
+                        deps.insert(idx);
+                    }
+                }
+                if let Some(ref inner) = type_expr.inner {
+                    if let Some(first) = inner.path.first() {
+                        if let Some(&idx) = name_to_idx.get(first.as_str()) {
+                            deps.insert(idx);
+                        }
+                    }
+                }
+            }
+            NodeKind::FromEnum { value: expr, .. }
             | NodeKind::FromUnion { value: expr, .. }
             | NodeKind::NamedVariant { value: expr, .. }
             | NodeKind::Grouping { expr }

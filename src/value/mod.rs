@@ -180,6 +180,10 @@ pub struct UzonStruct {
     pub fields: IndexMap<String, Value>,
     /// Named type assigned via `called` or `as NamedStructType` (nominal type identity, §3.2.1 rule 5).
     pub type_name: Option<String>,
+    /// §7.3: canonical path of the file where this type was declared. Part of
+    /// nominal identity together with `type_name` — two structs sharing a
+    /// `type_name` but declared in different files are distinct types.
+    pub origin_file: Option<String>,
     /// True only for the struct value at the source-level `called TypeName`
     /// declaration site. Stringify uses this to decide whether to emit
     /// `called TypeName` (declaration) or drop the suffix for inherited
@@ -189,11 +193,11 @@ pub struct UzonStruct {
 
 impl UzonStruct {
     pub fn new(fields: IndexMap<String, Value>) -> Self {
-        Self { fields, type_name: None, declares_type: false }
+        Self { fields, type_name: None, origin_file: None, declares_type: false }
     }
 
     pub fn with_type_name(fields: IndexMap<String, Value>, type_name: impl Into<String>) -> Self {
-        Self { fields, type_name: Some(type_name.into()), declares_type: false }
+        Self { fields, type_name: Some(type_name.into()), origin_file: None, declares_type: false }
     }
 }
 

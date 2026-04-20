@@ -215,6 +215,21 @@ impl Evaluator {
                         ));
                     }
                     let mut val = self.eval_node(expr, scope, exclude)?;
+                    // §6.1: `null as TU named variant` requires the variant's
+                    // inner type to be `null`. Any other inner type rejects.
+                    if val.is_null() {
+                        let variant_inner = tv.get(tag).and_then(|o| o.as_deref());
+                        if variant_inner != Some("null") {
+                            let got = variant_inner.unwrap_or("null");
+                            return Err(UzonError::type_error(
+                                format!(
+                                    "cannot cast null to variant '{tag}' of '{type_name}'; \
+                                     variant's inner type is {got}, not null"
+                                ),
+                                node.span.line, node.span.col,
+                            ));
+                        }
+                    }
                     // Adopt the variant's declared type for untyped numeric values.
                     if let Some(Some(variant_type)) = tv.get(tag) {
                         Self::adopt_variant_type(&mut val, variant_type);

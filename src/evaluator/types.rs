@@ -678,16 +678,28 @@ impl Evaluator {
         let typedef = scope.resolve_type_path(&type_expr.path).unwrap();
         if let TypeDefKind::Struct { ref fields } = typedef.kind {
             let type_name_str = typedef.name.clone();
+            let typedef_origin = typedef.origin_file.clone();
             if let Value::Struct(ref val_fields) = val {
-                // §6.3: nominal type identity — a value already stamped with
-                // a named struct type cannot be re-annotated as a different
-                // named struct type, even when the shapes match.
+                // §6.3 + §7.3: nominal identity is (declaring_file, type_name).
+                // Reject when the value already carries a named struct type and
+                // either the name or the declaring file differs.
                 if let Some(ref existing) = val_fields.type_name {
-                    if existing != &type_name_str {
+                    let name_differs = existing != &type_name_str;
+                    let origin_differs = match (&val_fields.origin_file, &typedef_origin) {
+                        (Some(a), Some(b)) => a != b,
+                        _ => false,
+                    };
+                    if name_differs || origin_differs {
+                        let qual = |name: &str, file: &Option<String>| match file {
+                            Some(f) => format!("{name} (declared in {f})"),
+                            None => name.to_string(),
+                        };
                         return Err(UzonError::type_error(
                             format!(
-                                "cannot annotate value of type {existing} as {type_name_str}; \
-                                 named struct types are nominal, not structural"
+                                "cannot annotate value of type {} as {}; \
+                                 named struct types are nominal, not structural",
+                                qual(existing, &val_fields.origin_file),
+                                qual(&type_name_str, &typedef_origin),
                             ),
                             node.span.line, node.span.col,
                         ));
@@ -761,8 +773,10 @@ impl Evaluator {
                             }
                         }
                     }
-                    // §3.2.1 rule 5: stamp named type on the struct value
+                    // §3.2.1 rule 5 + §7.3: stamp named type and declaring-
+                    // file origin on the struct value (nominal identity).
                     val_fields.type_name = Some(type_name_str);
+                    val_fields.origin_file = typedef_origin;
                 }
                 return Ok(val);
             } else {

@@ -12,6 +12,9 @@ use crate::value::Value;
 pub struct TypeDef {
     pub kind: TypeDefKind,
     pub name: String,
+    /// §7.3: canonical path of the file where this type was declared. Two
+    /// same-named types declared in different files are distinct nominal types.
+    pub origin_file: Option<String>,
 }
 
 /// Field type information for named struct conformance checking (§6.3) and
@@ -205,6 +208,7 @@ impl Scope {
                         kind: TypeDefKind::Enum {
                             variants: e.variants.clone(),
                         },
+                        origin_file: None,
                     });
                 }
                 Value::TaggedUnion(tu)
@@ -215,6 +219,7 @@ impl Scope {
                         kind: TypeDefKind::TaggedUnion {
                             variants: tu.variants.clone(),
                         },
+                        origin_file: None,
                     });
                 }
                 Value::Union(u) if u.type_name.as_deref() == Some(type_name.as_str()) => {
@@ -223,6 +228,34 @@ impl Scope {
                         kind: TypeDefKind::Union {
                             types: u.types.clone(),
                         },
+                        origin_file: None,
+                    });
+                }
+                // §7.3 + §6.3: resolve a dotted struct type path by locating
+                // the declaring struct value within the imported module and
+                // reconstructing its nominal identity (origin_file + fields).
+                Value::Struct(s)
+                    if s.declares_type
+                        && s.type_name.as_deref() == Some(type_name.as_str()) =>
+                {
+                    let fields: IndexMap<String, crate::scope::StructFieldInfo> = s
+                        .fields
+                        .iter()
+                        .map(|(k, v)| {
+                            (
+                                k.clone(),
+                                crate::scope::StructFieldInfo {
+                                    type_category: v.type_name().to_string(),
+                                    type_annotation: None,
+                                    default_value: v.clone(),
+                                },
+                            )
+                        })
+                        .collect();
+                    return Some(TypeDef {
+                        name: type_name.clone(),
+                        kind: TypeDefKind::Struct { fields },
+                        origin_file: s.origin_file.clone(),
                     });
                 }
                 _ => {}

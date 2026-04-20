@@ -96,18 +96,22 @@ impl Evaluator {
         expr: &Node,
         scope: &mut Scope,
     ) -> Result<()> {
+        let origin_file = self.current_origin_file();
         let typedef = match value {
             Value::Enum(e) => TypeDef {
                 name: name.to_string(),
                 kind: TypeDefKind::Enum { variants: e.variants.clone() },
+                origin_file: origin_file.clone(),
             },
             Value::Union(u) => TypeDef {
                 name: name.to_string(),
                 kind: TypeDefKind::Union { types: u.types.clone() },
+                origin_file: origin_file.clone(),
             },
             Value::TaggedUnion(tu) => TypeDef {
                 name: name.to_string(),
                 kind: TypeDefKind::TaggedUnion { variants: tu.variants.clone() },
+                origin_file: origin_file.clone(),
             },
             Value::Struct(fields) => {
                 let field_annotations = Self::extract_struct_field_annotations(expr);
@@ -123,6 +127,7 @@ impl Evaluator {
                             })
                         }).collect(),
                     },
+                    origin_file: origin_file.clone(),
                 }
             }
             Value::Function(f) => {
@@ -133,6 +138,7 @@ impl Evaluator {
                 TypeDef {
                     name: name.to_string(),
                     kind: TypeDefKind::Function { param_types, return_type },
+                    origin_file: origin_file.clone(),
                 }
             }
             _ => return Ok(()),
@@ -167,6 +173,7 @@ impl Evaluator {
     }
 
     pub(crate) fn set_type_name(&self, value: Value, type_name: &str) -> Value {
+        let origin = self.current_origin_file();
         match value {
             Value::Enum(mut e) => {
                 e.type_name = Some(type_name.to_string());
@@ -186,6 +193,7 @@ impl Evaluator {
             }
             Value::Struct(mut s) => {
                 s.type_name = Some(type_name.to_string());
+                s.origin_file = origin;
                 s.declares_type = true;
                 Value::Struct(s)
             }
@@ -195,6 +203,17 @@ impl Evaluator {
             }
             other => other,
         }
+    }
+
+    /// §7.3: canonical path of the currently evaluating file, used to tag
+    /// type declarations with their declaring file for nominal identity.
+    pub(crate) fn current_origin_file(&self) -> Option<String> {
+        self.filename.as_ref().map(|p| {
+            p.canonicalize()
+                .unwrap_or_else(|_| p.clone())
+                .display()
+                .to_string()
+        })
     }
 
     /// §6.1: Validate that a type expression refers to known types. Recurses

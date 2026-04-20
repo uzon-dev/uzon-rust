@@ -39,11 +39,23 @@ fn collect_uzon(dir: &Path) -> Vec<PathBuf> {
 
 fn gather(dir: &Path, acc: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
+    // Multi-file fixture convention: when a directory contains `entry.uzon`,
+    // only that file is a test; sibling `.uzon` files are helper modules.
+    let has_entry = std::fs::read_dir(dir)
+        .map(|rd2| {
+            rd2.flatten().any(|e| {
+                e.path().file_name().and_then(|n| n.to_str()) == Some("entry.uzon")
+            })
+        })
+        .unwrap_or(false);
     for entry in rd.flatten() {
         let p = entry.path();
         if p.is_dir() {
             gather(&p, acc);
         } else if p.extension().is_some_and(|e| e == "uzon") {
+            if has_entry && p.file_name().and_then(|n| n.to_str()) != Some("entry.uzon") {
+                continue;
+            }
             acc.push(p);
         }
     }
