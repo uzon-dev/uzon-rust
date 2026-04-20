@@ -52,6 +52,13 @@ pub enum TypeDefKind {
         param_types: Vec<String>,
         return_type: String,
     },
+    /// §3.4.1: Named list type declared via `called` on an `are`/`is` list
+    /// binding. `element_type` is the inner element type name if known
+    /// (from a prior `as [T]` annotation or inferred from the first
+    /// non-null element); `None` for empty untyped lists.
+    List {
+        element_type: Option<String>,
+    },
 }
 
 /// Lexical scope with parent chain for nested structs (§5.12).
@@ -228,6 +235,21 @@ impl Scope {
                         kind: TypeDefKind::Union {
                             types: u.types.clone(),
                         },
+                        origin_file: None,
+                    });
+                }
+                // §3.4.1: cross-file named list types — `_shared.Colors` resolves
+                // by finding a list value whose type_name matches.
+                Value::List(l) if l.type_name.as_deref() == Some(type_name.as_str()) => {
+                    let element_type = l.element_type.clone().or_else(|| {
+                        l.elements
+                            .iter()
+                            .find(|v| !v.is_null())
+                            .map(|v| v.type_name().to_string())
+                    });
+                    return Some(TypeDef {
+                        name: type_name.clone(),
+                        kind: TypeDefKind::List { element_type },
                         origin_file: None,
                     });
                 }

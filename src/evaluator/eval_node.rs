@@ -541,6 +541,15 @@ impl Evaluator {
                         node.span.line, node.span.col,
                     ));
                 }
+                crate::scope::TypeDefKind::List { ref element_type } => {
+                    // §3.4.1: named list type default is an empty list carrying
+                    // the element type and the named type.
+                    return Ok(Value::List(UzonList {
+                        elements: vec![],
+                        element_type: element_type.clone(),
+                        type_name: Some(td.name),
+                    }));
+                }
             }
         }
 

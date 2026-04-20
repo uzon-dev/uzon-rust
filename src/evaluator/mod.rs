@@ -385,61 +385,111 @@ impl Evaluator {
             None => return Ok(()),
         };
 
-        if type_ann.is_list {
+        // §3.4.1: `as Name` where Name resolves to a named list type — rewrite
+        // to the equivalent `as [element_type]` and stamp the list's type_name
+        // afterward, so element-type inference shares the is_list=true path.
+        let (owned_inner, override_name): (Option<TypeExpr>, Option<String>) = if !type_ann.is_list {
+            match type_ann.path.last() {
+                None => (None, None),
+                Some(_) => match scope.resolve_type_path(&type_ann.path) {
+                    Some(td) => match td.kind {
+                        TypeDefKind::List { ref element_type } => {
+                            let inner = element_type.as_ref().map(|et| TypeExpr {
+                                path: vec![et.clone()],
+                                is_list: false,
+                                inner: None,
+                                is_null: false,
+                                tuple_types: None,
+                                span: type_ann.span,
+                            });
+                            (inner, Some(td.name.clone()))
+                        }
+                        _ => {
+                            let type_name = type_ann.path.last().unwrap();
+                            return Err(UzonError::type_error(
+                                format!("cannot annotate list as {type_name}; use as [{type_name}] for list type annotation"),
+                                binding.value.span.line, binding.value.span.col,
+                            ));
+                        }
+                    },
+                    None => {
+                        let type_name = type_ann.path.last().unwrap();
+                        return Err(UzonError::type_error(
+                            format!("cannot annotate list as {type_name}; use as [{type_name}] for list type annotation"),
+                            binding.value.span.line, binding.value.span.col,
+                        ));
+                    }
+                },
+            }
+        } else {
+            (None, None)
+        };
+
+        let inner_opt: Option<&TypeExpr> = if type_ann.is_list {
+            type_ann.inner.as_deref()
+        } else {
+            owned_inner.as_ref()
+        };
+
+        if let Some(inner) = inner_opt {
             // §3.5 rule 4: enum type-context inference via `are ... as [EnumType]`
-            if let Some(ref inner) = type_ann.inner {
-                let enum_info = scope.resolve_type_path(&inner.path).and_then(|td| {
-                    if let TypeDefKind::Enum { variants } = td.kind {
-                        Some((td.name, variants))
-                    } else { None }
-                });
-                if let Some((enum_name, variants)) = enum_info {
-                    if let NodeKind::ListLiteral { elements } = &binding.value.kind {
-                        let mut resolved = Vec::with_capacity(elements.len());
-                        for elem in elements {
-                            let v = if let NodeKind::Identifier { ref name } = elem.kind {
-                                if variants.contains(name) {
-                                    Value::Enum(UzonEnum::new(
-                                        name.clone(), variants.clone(), Some(enum_name.clone()),
-                                    ))
-                                } else {
-                                    self.eval_node(elem, scope, Some(&binding.name))?
-                                }
+            let enum_info = scope.resolve_type_path(&inner.path).and_then(|td| {
+                if let TypeDefKind::Enum { variants } = td.kind {
+                    Some((td.name, variants))
+                } else { None }
+            });
+            if let Some((enum_name, variants)) = enum_info {
+                if let NodeKind::ListLiteral { elements } = &binding.value.kind {
+                    let mut resolved = Vec::with_capacity(elements.len());
+                    for elem in elements {
+                        let v = if let NodeKind::Identifier { ref name } = elem.kind {
+                            if variants.contains(name) {
+                                Value::Enum(UzonEnum::new(
+                                    name.clone(), variants.clone(), Some(enum_name.clone()),
+                                ))
                             } else {
                                 self.eval_node(elem, scope, Some(&binding.name))?
-                            };
-                            if !v.is_null() {
-                                if let Some(inner_type_name) = inner.path.last() {
-                                    self.check_type_assertion(&v, inner_type_name, &binding.value)?;
-                                }
                             }
-                            resolved.push(v);
-                        }
-                        *value = Value::List(UzonList::with_type(resolved, enum_name.clone()));
-                        return Ok(());
-                    }
-                }
-
-                // Note: named struct / tagged union element-type inference for
-                // `are` bindings runs earlier in `eval_are_binding_with_type_context`
-                // — by the time we reach here the value is already the right list.
-
-                if let Value::List(ref mut list) = *value {
-                    if let Some(inner_type_name) = inner.path.last() {
-                        for item in list.iter() {
-                            if !item.is_null() {
-                                self.check_type_assertion(item, inner_type_name, &binding.value)?;
+                        } else {
+                            self.eval_node(elem, scope, Some(&binding.name))?
+                        };
+                        if !v.is_null() {
+                            if let Some(inner_type_name) = inner.path.last() {
+                                self.check_type_assertion(&v, inner_type_name, &binding.value)?;
                             }
                         }
-                        list.element_type = Some(inner_type_name.clone());
+                        resolved.push(v);
                     }
+                    let mut list = UzonList::with_type(resolved, enum_name.clone());
+                    list.type_name = override_name.clone();
+                    *value = Value::List(list);
+                    return Ok(());
                 }
             }
-        } else if let Some(type_name) = type_ann.path.last() {
-            return Err(UzonError::type_error(
-                format!("cannot annotate list as {type_name}; use as [{type_name}] for list type annotation"),
-                binding.value.span.line, binding.value.span.col,
-            ));
+
+            // Note: named struct / tagged union element-type inference for
+            // `are` bindings runs earlier in `eval_are_binding_with_type_context`
+            // — by the time we reach here the value is already the right list.
+
+            if let Value::List(ref mut list) = *value {
+                if let Some(inner_type_name) = inner.path.last() {
+                    for item in list.iter() {
+                        if !item.is_null() {
+                            self.check_type_assertion(item, inner_type_name, &binding.value)?;
+                        }
+                    }
+                    list.element_type = Some(inner_type_name.clone());
+                }
+                if override_name.is_some() {
+                    list.type_name = override_name;
+                }
+            }
+        } else if override_name.is_some() {
+            // Named list type with no element_type information (rare: empty
+            // source list with `called` but no `as [T]`). Just stamp the name.
+            if let Value::List(ref mut list) = *value {
+                list.type_name = override_name;
+            }
         }
 
         Ok(())

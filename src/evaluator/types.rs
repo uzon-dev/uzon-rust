@@ -88,6 +88,42 @@ impl Evaluator {
             }
         }
 
+        // §3.4.1: `as Name` where Name is a named list type — rewrite to
+        // `as [element_type]` and stamp `list.type_name = Name` on the result.
+        if let Some(named_list) = scope.resolve_type_path(&type_expr.path).and_then(|td| {
+            if let TypeDefKind::List { ref element_type } = td.kind {
+                Some((td.name.clone(), element_type.clone()))
+            } else {
+                None
+            }
+        }) {
+            let (list_type_name, element_type) = named_list;
+            let synthetic = TypeExpr {
+                path: Vec::new(),
+                is_list: true,
+                inner: element_type.as_ref().map(|et| Box::new(TypeExpr {
+                    path: vec![et.clone()],
+                    is_list: false,
+                    inner: None,
+                    is_null: false,
+                    tuple_types: None,
+                    span: type_expr.span,
+                })),
+                is_null: false,
+                tuple_types: None,
+                span: type_expr.span,
+            };
+            let prev_in_ta = self.in_type_annotation;
+            self.in_type_annotation = true;
+            let result = self.eval_type_annotation_list_from_ast(expr, &synthetic, scope, exclude, node);
+            self.in_type_annotation = prev_in_ta;
+            let mut val = result?;
+            if let Value::List(ref mut list) = val {
+                list.type_name = Some(list_type_name);
+            }
+            return Ok(val);
+        }
+
         // §6.1: list type annotation `as [Type]`
         // §3.5 rule 4: enum type-context inference via `as [EnumType]`
         // Must run BEFORE eval_node so bare identifiers in enum lists are resolved from AST.

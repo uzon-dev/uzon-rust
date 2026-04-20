@@ -141,6 +141,23 @@ impl Evaluator {
                     origin_file: origin_file.clone(),
                 }
             }
+            Value::List(list) => {
+                // §3.4.1: `called Name` on a list binding declares a named list
+                // type. Element type comes from an explicit `as [T]` when
+                // present; otherwise it is inferred from the first non-null
+                // element so that `are 1, 2, 3 called Numbers` names [i64].
+                let element_type = list.element_type.clone().or_else(|| {
+                    list.elements
+                        .iter()
+                        .find(|v| !v.is_null())
+                        .map(|v| Self::specific_type_name(v))
+                });
+                TypeDef {
+                    name: name.to_string(),
+                    kind: TypeDefKind::List { element_type },
+                    origin_file: origin_file.clone(),
+                }
+            }
             _ => return Ok(()),
         };
 

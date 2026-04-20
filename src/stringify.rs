@@ -59,15 +59,40 @@ fn write_binding(
 
     // E.4: prefer `are` for non-empty lists when safe
     if let Value::List(list) = value {
-        if !list.is_empty() && is_are_safe(list, st) && list.element_type.is_none() {
-            write_are_list(out, list, depth, options, st);
+        // §3.4.1: lists with a named type must preserve the type across
+        // roundtrip. When `type_name` is present, the name subsumes the
+        // element_type annotation so we may still use the compact `are` form.
+        if !list.is_empty()
+            && is_are_safe(list, st)
+            && (list.element_type.is_none() || list.type_name.is_some())
+        {
+            let named_suffix = list_named_type_suffix(list, st);
+            write_are_list(out, list, depth, options, st, &named_suffix);
             return;
         }
     }
 
     out.push_str(" is ");
     write_value(out, value, depth, options, st);
+    if let Value::List(list) = value {
+        out.push_str(&list_named_type_suffix(list, st));
+    }
     out.push('\n');
+}
+
+/// §3.4.1: Compute the ` called Name` or ` as Name` suffix for a list with a
+/// named type, tracking first-vs-subsequent use via `st`. Empty string when the
+/// list has no `type_name`.
+fn list_named_type_suffix(list: &UzonList, st: &mut HashSet<String>) -> String {
+    let Some(ref name) = list.type_name else {
+        return String::new();
+    };
+    if st.contains(name) {
+        format!(" as {name}")
+    } else {
+        st.insert(name.clone());
+        format!(" called {name}")
+    }
 }
 
 /// Check whether `are` syntax is safe for a list.
@@ -91,8 +116,9 @@ fn write_are_list(
     depth: usize,
     options: &StringifyOptions,
     st: &mut HashSet<String>,
+    trailing_suffix: &str,
 ) {
-    // Try inline: `name are elem1, elem2, elem3`
+    // Try inline: `name are elem1, elem2, elem3[ trailing_suffix]`
     if !has_nested_collection(items) {
         let mut inline = String::from(" are ");
         let mut inline_st = st.clone();
@@ -102,6 +128,7 @@ fn write_are_list(
             }
             write_value(&mut inline, item, depth, options, &mut inline_st);
         }
+        inline.push_str(trailing_suffix);
         inline.push('\n');
         if inline.len() <= 80 {
             *st = inline_st;
@@ -118,6 +145,11 @@ fn write_are_list(
         if i + 1 < items.len() {
             out.push(',');
         }
+        out.push('\n');
+    }
+    if !trailing_suffix.is_empty() {
+        write_indent(out, depth, options);
+        out.push_str(trailing_suffix.trim_start());
         out.push('\n');
     }
 }
@@ -236,31 +268,44 @@ fn write_list(
     options: &StringifyOptions,
     st: &mut HashSet<String>,
 ) {
+    // §3.4.1: when the list has a named type AND at least one concrete
+    // element, write_binding emits `called Name` or `as Name` alone — the
+    // named type's registered element_type carries the element info. For
+    // empty or all-null lists, keep `as [T]` so the re-parse can register
+    // the named type with its element type at the declaration site.
+    let emit_element_type = list.type_name.is_none()
+        || list.is_empty()
+        || list.iter().all(|v| v.is_null());
+
     if list.is_empty() {
         out.push_str("[]");
         // Emit type annotation for empty lists that have element_type
-        if let Some(ref et) = list.element_type {
-            out.push_str(" as [");
-            out.push_str(et);
-            out.push(']');
+        if emit_element_type {
+            if let Some(ref et) = list.element_type {
+                out.push_str(" as [");
+                out.push_str(et);
+                out.push(']');
+            }
         }
         return;
     }
 
     // All-null lists need type annotation too
     if list.iter().all(|v| v.is_null()) {
-        if let Some(ref et) = list.element_type {
-            // Inline: [ null, null ] as [Type]
-            let mut inline = String::from("[ ");
-            for (i, _) in list.iter().enumerate() {
-                if i > 0 { inline.push_str(", "); }
-                inline.push_str("null");
+        if emit_element_type {
+            if let Some(ref et) = list.element_type {
+                // Inline: [ null, null ] as [Type]
+                let mut inline = String::from("[ ");
+                for (i, _) in list.iter().enumerate() {
+                    if i > 0 { inline.push_str(", "); }
+                    inline.push_str("null");
+                }
+                inline.push_str(" ] as [");
+                inline.push_str(et);
+                inline.push(']');
+                out.push_str(&inline);
+                return;
             }
-            inline.push_str(" ] as [");
-            inline.push_str(et);
-            inline.push(']');
-            out.push_str(&inline);
-            return;
         }
     }
 
@@ -269,10 +314,12 @@ fn write_list(
         if inline.len() <= 80 {
             out.push_str(&inline);
             // Emit type annotation for non-empty typed lists (needed for roundtrip)
-            if let Some(ref et) = list.element_type {
-                out.push_str(" as [");
-                out.push_str(et);
-                out.push(']');
+            if emit_element_type {
+                if let Some(ref et) = list.element_type {
+                    out.push_str(" as [");
+                    out.push_str(et);
+                    out.push(']');
+                }
             }
             return;
         }
@@ -291,10 +338,12 @@ fn write_list(
     write_indent(out, depth, options);
     out.push(']');
     // Emit type annotation for non-empty typed lists (needed for roundtrip)
-    if let Some(ref et) = list.element_type {
-        out.push_str(" as [");
-        out.push_str(et);
-        out.push(']');
+    if emit_element_type {
+        if let Some(ref et) = list.element_type {
+            out.push_str(" as [");
+            out.push_str(et);
+            out.push(']');
+        }
     }
 }
 
