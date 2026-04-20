@@ -746,6 +746,57 @@ fn test_duplicate_function_param_name() {
 }
 
 #[test]
+fn test_mutual_recursion_rejected() {
+    // §3.8: mutual recursion A→B→A must be detected.
+    let err = eval_err(
+        "f is function n as i32 returns i32 { g(n) }\n\
+         g is function n as i32 returns i32 { f(n) }",
+    );
+    let is_cycle = matches!(
+        err,
+        crate::error::UzonError::Circular { .. }
+    ) || matches!(
+        &err,
+        crate::error::UzonError::Multiple { errors } if errors.iter().any(|e| e.is_circular())
+    );
+    assert!(is_cycle, "expected circular error for mutual recursion, got {err}");
+}
+
+#[test]
+fn test_transitive_recursion_rejected() {
+    // §3.8: A→B→C→A must be detected.
+    let err = eval_err(
+        "a is function n as i32 returns i32 { b(n) }\n\
+         b is function n as i32 returns i32 { c(n) }\n\
+         c is function n as i32 returns i32 { a(n) }",
+    );
+    let is_cycle = matches!(
+        err,
+        crate::error::UzonError::Circular { .. }
+    ) || matches!(
+        &err,
+        crate::error::UzonError::Multiple { errors } if errors.iter().any(|e| e.is_circular())
+    );
+    assert!(is_cycle, "expected circular error for transitive recursion, got {err}");
+}
+
+#[test]
+fn test_function_default_undefined_rejected() {
+    // §3.8: `undefined` is not permitted as a default parameter value.
+    eval_err(
+        "f is function n as i32 default undefined returns i32 { n }",
+    );
+}
+
+#[test]
+fn test_function_default_type_mismatch() {
+    // §3.8: default value's type must match the parameter's declared type.
+    eval_err(
+        "f is function p as u16 default \"8080\" returns u16 { p }",
+    );
+}
+
+#[test]
 fn test_recursive_function_call_site() {
     // Recursive call error should point to the call site (line 2), not the definition (line 1)
     let err = eval_err("f is function x as i32 returns i32 {\n  f(x)\n}");
