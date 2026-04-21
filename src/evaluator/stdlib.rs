@@ -461,7 +461,7 @@ impl Evaluator {
         }
         let val = self.eval_std_arg(&args[0], "lower", scope, exclude, node)?;
         match Self::unwrap_union_owned(val) {
-            Value::String(s) => Ok(Value::String(s.to_lowercase())),
+            Value::String(s) => Ok(Value::String(simple_lower(&s))),
             other => Err(UzonError::type_error(
                 format!("std.lower requires string, got {}", other.type_name()),
                 node.span.line, node.span.col,
@@ -481,7 +481,7 @@ impl Evaluator {
         }
         let val = self.eval_std_arg(&args[0], "upper", scope, exclude, node)?;
         match Self::unwrap_union_owned(val) {
-            Value::String(s) => Ok(Value::String(s.to_uppercase())),
+            Value::String(s) => Ok(Value::String(simple_upper(&s))),
             other => Err(UzonError::type_error(
                 format!("std.upper requires string, got {}", other.type_name()),
                 node.span.line, node.span.col,
@@ -968,4 +968,38 @@ impl Evaluator {
         }
         Ok(())
     }
+}
+
+/// §5.16.6 (v0.11): Unicode simple (default) lowercase folding.
+/// Applies the codepoint-by-codepoint `Lowercase_Mapping` for characters
+/// whose full Unicode folding produces exactly one codepoint. Multi-codepoint
+/// expansions (e.g., `ß` → `ss`, `İ` → `i\u{307}`) are **not** performed —
+/// the input character is returned unchanged. Locale-independent.
+fn simple_lower(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        let mut it = c.to_lowercase();
+        match (it.next(), it.next()) {
+            (Some(a), None) => out.push(a),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// §5.16.6 (v0.11): Unicode simple (default) uppercase folding.
+/// Applies the codepoint-by-codepoint `Uppercase_Mapping` for characters
+/// whose full Unicode folding produces exactly one codepoint. Multi-codepoint
+/// expansions (e.g., `ß` → `SS`) are **not** performed — the input character
+/// is returned unchanged. Locale-independent.
+fn simple_upper(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        let mut it = c.to_uppercase();
+        match (it.next(), it.next()) {
+            (Some(a), None) => out.push(a),
+            _ => out.push(c),
+        }
+    }
+    out
 }
