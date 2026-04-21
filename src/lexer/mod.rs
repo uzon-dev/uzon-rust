@@ -143,6 +143,16 @@ impl Lexer {
             ));
         }
 
+        // §2.1: mid-file BOM (U+FEFF) is a syntax error outside strings/comments.
+        // The leading BOM is stripped before this loop runs (see tokenize()).
+        if ch == '\u{FEFF}' {
+            return Err(UzonError::syntax(
+                "mid-file BOM (U+FEFF) is not allowed outside string literals and comments",
+                self.line,
+                self.col,
+            ));
+        }
+
         // Whitespace (not newline)
         if ch == ' ' || ch == '\t' || ch == '\r' {
             self.advance();

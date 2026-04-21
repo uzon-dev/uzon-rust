@@ -29,6 +29,14 @@ impl Lexer {
                     self.line, self.col,
                 ));
             }
+            // §2.1: BOM (U+FEFF) is an anti-spoofing reject mid-identifier.
+            if ch == '\u{FEFF}' {
+                return Err(UzonError::syntax(
+                    "mid-file BOM (U+FEFF) is not allowed outside string literals and comments",
+                    self.line,
+                    self.col,
+                ));
+            }
             ident.push(ch);
             self.advance();
         }
