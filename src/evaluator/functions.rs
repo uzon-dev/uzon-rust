@@ -69,13 +69,22 @@ impl Evaluator {
         for (name, val) in &func.captured_bindings {
             default_scope.define(name.clone(), val.clone());
         }
+        // §3.5 rule 4 (v0.11): named types must be visible so bare variant
+        // names in default expressions resolve against the declared type.
+        for (name, td) in scope.all_types() {
+            default_scope.define_type(name, td);
+        }
 
         // Bind parameters
         for (i, param) in func.params.iter().enumerate() {
             let mut val = if i < arg_vals.len() {
                 arg_vals[i].clone()
             } else if let Some(ref default_expr) = param.default {
-                self.eval_node(default_expr, &mut default_scope, None)?
+                // §3.5 rule 4 (v0.11): parameter type is type context for the
+                // default expression — bare variant names resolve against it.
+                self.eval_with_type_context(
+                    default_expr, &param.type_expr, &mut default_scope, None,
+                )?
             } else {
                 // §5.15: wrong number of arguments is a type error
                 return Err(UzonError::type_error(

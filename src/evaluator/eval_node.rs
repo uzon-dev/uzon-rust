@@ -164,7 +164,12 @@ impl Evaluator {
                 // once-at-definition so errors surface even for uncalled functions.)
                 for param in params {
                     if let Some(ref default_expr) = param.default {
-                        let val = self.eval_node(default_expr, scope, None)?;
+                        // §3.5 rule 4 (v0.11): evaluate the default with the
+                        // parameter's declared type as context, so bare variant
+                        // names resolve to the declared enum / tagged union.
+                        let val = self.eval_with_type_context(
+                            default_expr, &param.type_expr, scope, None,
+                        )?;
                         if val.is_undefined() {
                             return Err(UzonError::type_error(
                                 format!(
