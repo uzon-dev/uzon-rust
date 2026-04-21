@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.1] - 2026-04-21
+
+### Fixed
+
+- **§2.3 bidi/RTL control chars** rejected outside string literals, including mid-identifier (U+200E/200F/202A–E/2066–2069)
+- **§3.2 struct field defaults** emit in declaration order (switched `TypeDefKind::Struct` fields from `BTreeMap` to `IndexMap` per §11.1)
+- **§3.2.1 list struct field-order**: struct equivalence in list homogeneity now uses set-based field comparison — elements with the same field names in different orders are structurally identical
+- **§3.2.1 deferred-null fields**: untyped `null` fields accept any type at the `as TypeName` site; typed-null (`null as T`) remains enforced
+- **§3.4 untyped integer promotion**: integer list elements promote to `f64` when siblings are float; explicit-typed integers still conflict
+- **§3.4.1 named list types** registered via `called` on both `are` and `is` list bindings; `more are 4, 5, 6 as Numbers` now resolves after `nums are 1, 2, 3 called Numbers`
+- **§3.4.1 / §9 are-binding trailing `as`**: always lifted to list level regardless of annotation shape; `ids are 1, 2, 3 as i32` now produces a list-vs-scalar type error
+- **§3.5 ambiguous enum variants**: bare identifier matching ≥2 visible enum types is a type error and must be qualified with `as TypeName`
+- **§3.6 tuple union matching**: tuple values structurally match tuple member types in a union with recursive element adoption
+- **§3.7 tagged union variant order** preserved through round-trip (switched `TypeDefKind::TaggedUnion` and `UzonTaggedUnion` variant maps to `IndexMap`)
+- **§3.8 cross-file named function types** resolvable via value path
+- **§3.8 higher-order call graph**: conservative edges added when calling a parameter whose declared type is a named function type, so cycles are detected statically
+- **§4.2 numeric literals**: reject consecutive and trailing underscores
+- **§4.5 literal `undefined`**: restricted to `is` / `is not` operands; rejected as operand of `or else`, as `then` / `else` branch, and as a function body's final expression
+- **§5.7 / §5.9 / §7.3 nominal distinction**: structs sharing a name from different origin files are distinct in `or else` and `if` branches
+- **§5.9 R8 Issue 5** scrutinee narrowing for `<x> is [not] type T` and `<x> is [not] named V`
+- **§5.12 R4**: member access on a function value is a type error
+- **§5.13** standalone `env` is a type error, not runtime
+- **§5.16 R4** named list types propagate through `std.reverse`, `std.filter`, `std.sort` (not `std.map`)
+- **§6.1 null annotations**: reject `null as T` unless T is null, a union containing null, or a tagged-union null variant; reject `null as (tuple)`
+- **§6.1 validate_type_exists** recurses into list/tuple element types
+- **§6.3 R7 union adoption**: untyped literal adopts the first union member whose category exactly matches, with integer→float promotion fallback
+- **§7.3 cross-file nominal identity**: track declaring file on named struct types via `origin_file`; same-named types in different files are distinct
+- **§11.4 trailing comma**: lookahead breaks out of variant loop when the next non-newline token closes the outer container
+- Stringify tracks `declares_type` on `UzonStruct` so `called T` is emitted only at declaration sites, not on inherited type names through `with` / `std.*`; typed lists suppress `are` syntax and redundant element `called`
+
+## [0.10.0] - 2026-04-20
+
+### Added
+
+- **§3.2 struct field defaults** (v0.10): `{ ... } as NamedStruct` fills missing fields from the type's declared per-field defaults, with recursive cascade for named-struct defaults
+- **§3.5 enum variant shorthand** (v0.10): bare variant names resolve in rule-4 type-context positions — struct field values, function arguments, and the final expression of an enum-returning function. Bindings still shadow variants.
+- **§3.7 tagged union variant shorthand** (v0.10): `variant_name primary` and `variant_name(args)` forms across struct fields, function args/returns, and list element types; shorthand nests, and default of a standalone tagged union is the default of its first variant's inner type wrapped in that tag
+
 ## [0.9.0] - 2026-04-18
 
 ### Added
