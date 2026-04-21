@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.2] - 2026-04-21
+
+### Fixed (v0.11 editorial/consistency alignment)
+
+- **§2.1 mid-file BOM** (U+FEFF) rejected outside string literals and comments, mirroring §2.3 bidi rejection (BOM is a known invisible-character spoofing vector)
+- **§3.1 `in` operator**: top-level `undefined` operand remains a runtime error; `undefined` elements *within* tuples/structs are permitted per §5.8.1 (verified — no code change)
+- **§3.5 rule 4 type-context inference**: function parameter default expressions now resolve bare variant names against the declared parameter type (e.g., `function c as Color default red returns ...`)
+- **§3.6 standalone union default**: non-empty tuple first member produces element-wise defaults `(T1_default, T2_default, ...)` instead of `()` (empty-tuple first member still yields `()`)
+- **§3.8 function equality**: `is`/`is not` against `null` or `undefined` is permitted by the universal null/undefined exemption, even though function-to-function comparison remains a type error
+- **§4.4 string literals**: raw control characters U+0000–U+001F (including literal LF/CR) and U+007F are rejected inside string literals — use escapes (`\n`, `\r`, `\t`, `\u{...}`)
+- **§5.16.6 `std.lower` / `std.upper`**: Unicode simple (default) case folding — locale-independent, one-to-one codepoint mappings only; characters whose full folding produces multiple codepoints (e.g., German `ß`) are returned unchanged
+- **§6.3 / §7.3 tagged-union re-annotation**: `x as T` where `x` is already a `T`-tagged value is a no-op (identity preservation), not a "missing `named`" error
+- **§11.2.1 `called` nesting**: rejected inside if/case/when branches, parenthesized subexpressions, list/tuple elements, and function arguments (already enforced; new fixtures codify)
+
 ## [0.10.1] - 2026-04-21
 
 ### Fixed
