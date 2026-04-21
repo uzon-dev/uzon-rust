@@ -530,6 +530,39 @@ fn test_standalone_union_default_string_first() {
 }
 
 #[test]
+fn test_standalone_union_default_tuple_first_v0_11() {
+    // §3.6 v0.11: non-empty tuple first member → element-wise defaults,
+    // not `()`. Here (i32, string) should default to (0, "").
+    let v = eval_val("Pair is union (i32, string), f64\nx is Pair", "x");
+    if let Value::Union(u) = v {
+        if let Value::Tuple(t) = &*u.value {
+            assert_eq!(t.elements.len(), 2, "expected 2-tuple default, got {t:?}");
+            assert!(matches!(&t.elements[0], Value::Integer(n) if n.value == 0));
+            assert_eq!(t.elements[1], Value::String(String::new()));
+        } else {
+            panic!("expected inner tuple, got {:?}", u.value);
+        }
+    } else {
+        panic!("expected union-wrapped default, got {v:?}");
+    }
+}
+
+#[test]
+fn test_standalone_union_default_tuple_empty_first() {
+    // §3.6: empty tuple first member still produces `()`.
+    let v = eval_val("E is union (), f64\nx is E", "x");
+    if let Value::Union(u) = v {
+        if let Value::Tuple(t) = &*u.value {
+            assert!(t.elements.is_empty());
+        } else {
+            panic!("expected empty tuple, got {:?}", u.value);
+        }
+    } else {
+        panic!("expected union-wrapped default, got {v:?}");
+    }
+}
+
+#[test]
 fn test_is_type_null() {
     assert_eq!(
         eval_val("x is null\nresult is x is type null", "result"),
