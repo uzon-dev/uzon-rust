@@ -1,6 +1,6 @@
 # uzon
 
-A Rust library for parsing, evaluating, and manipulating [UZON](https://uzon.dev) — a typed, human-readable data expression format.
+A Rust library for parsing, evaluating, and manipulating [UZON](https://uzon.dev) — a typed configuration language.
 
 ```rust
 use uzon::{from_str, Value};
