@@ -53,11 +53,30 @@ impl Evaluator {
             }
         }
 
-        // §6.3: `as TaggedUnionType` without `named` is a type error.
-        // NamedVariant expressions already carry a tag, so they are exempt.
+        // §6.3 / §7.3: `as TaggedUnionType` on an **already-tagged** value of
+        // the same type is a no-op (identity preservation). `named` is only
+        // required when adopting a **non-tagged** value as a tagged union.
+        // NamedVariant AST nodes already carry a tag, so they are exempt.
         if !matches!(expr.kind, NodeKind::NamedVariant { .. }) {
             if let Some(typedef) = scope.resolve_type_path(&type_expr.path) {
                 if let TypeDefKind::TaggedUnion { .. } = &typedef.kind {
+                    // Try evaluating the expression: if it's already a tagged
+                    // union of this same type, treat `as T` as identity.
+                    let prev_in_ta = self.in_type_annotation;
+                    self.in_type_annotation = true;
+                    let eval_result = self.eval_node(expr, scope, exclude);
+                    self.in_type_annotation = prev_in_ta;
+                    if let Ok(val) = eval_result {
+                        if let Value::TaggedUnion(ref tu) = val {
+                            if tu.type_name.as_deref() == Some(typedef.name.as_str()) {
+                                return Ok(val);
+                            }
+                        }
+                        // Propagate undefined through `as`.
+                        if val.is_undefined() {
+                            return Ok(Value::Undefined);
+                        }
+                    }
                     return Err(UzonError::type_error(
                         format!("'as {}' requires 'named' for tagged union types; use 'value named tag as {}'",
                             typedef.name, typedef.name),
