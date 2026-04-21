@@ -175,11 +175,22 @@ impl Evaluator {
             } else { lv }
         } else { lv };
 
-        if matches!(&lv, Value::Function(_)) || matches!(&rv, Value::Function(_)) {
+        // §3.8 + §5.2: function equality is a type error — except comparison
+        // against `null` or `undefined`, which is permitted by the universal
+        // null/undefined exemption and returns bool.
+        let has_fn = matches!(&lv, Value::Function(_)) || matches!(&rv, Value::Function(_));
+        let other_is_null_or_undef =
+            (matches!(&lv, Value::Function(_)) && (rv.is_null() || rv.is_undefined()))
+            || (matches!(&rv, Value::Function(_)) && (lv.is_null() || lv.is_undefined()));
+        if has_fn && !other_is_null_or_undef {
             return Err(UzonError::type_error(
                 "functions cannot be compared for equality",
                 node.span.line, node.span.col,
             ));
+        }
+        if has_fn {
+            // function is never equal to null or undefined; is not → true
+            return Ok(Value::Bool(op != BinaryOp::Is));
         }
 
         // §3.7.2: tagged union vs non-tagged-union is type error
